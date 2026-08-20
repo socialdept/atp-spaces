@@ -1,0 +1,48 @@
+{
+    "name": "socialdept/atp-spaces",
+    "description": "AT Protocol spaces (permissioned data) for Laravel",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "atproto",
+        "spaces",
+        "permissioned-data",
+        "laravel"
+    ],
+    "require": {
+        "php": "^8.3",
+        "ext-json": "*",
+        "illuminate/support": "^11.0|^12.0|^13.0",
+        "illuminate/console": "^11.0|^12.0|^13.0",
+        "illuminate/http": "^11.0|^12.0|^13.0",
+        "guzzlehttp/guzzle": "^7.5",
+        "socialdept/atp-support": "^0.3"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^9.0|^10.0|^11.0",
+        "phpunit/phpunit": "^11.0|^12.0",
+        "friendsofphp/php-cs-fixer": "^3.89"
+    },
+    "autoload": {
+        "psr-4": {
+            "SocialDept\\AtpSpaces\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "SocialDept\\AtpSpaces\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "SocialDept\\AtpSpaces\\AtpSpacesServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
