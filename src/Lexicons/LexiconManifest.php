@@ -2,6 +2,9 @@
 
 namespace SocialDept\AtpSpaces\Lexicons;
 
+use FilesystemIterator;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 use SocialDept\AtpSpaces\Exceptions\LexiconDriftException;
 
 /**
@@ -161,8 +164,8 @@ class LexiconManifest
         $found = [];
         $length = strlen($this->directory) + 1;
 
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($this->directory, \FilesystemIterator::SKIP_DOTS)
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($this->directory, FilesystemIterator::SKIP_DOTS)
         );
 
         foreach ($iterator as $file) {

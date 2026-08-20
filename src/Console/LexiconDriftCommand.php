@@ -5,6 +5,7 @@ namespace SocialDept\AtpSpaces\Console;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use SocialDept\AtpSpaces\Lexicons\LexiconManifest;
+use Throwable;
 
 /**
  * Compare the vendored space lexicons against the upstream branch.
@@ -174,7 +175,7 @@ class LexiconDriftCommand extends Command
             'User-Agent' => 'socialdept/atp-spaces',
         ]);
 
-        $token = $this->option('token') ?: env('GITHUB_TOKEN');
+        $token = $this->option('token') ?: config('atp-spaces.lexicons.github_token');
 
         if (is_string($token) && $token !== '') {
             $request = $request->withToken($token);
@@ -182,7 +183,7 @@ class LexiconDriftCommand extends Command
 
         try {
             $response = $request->get($url);
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             if (! $quiet) {
                 $this->error('  Could not reach GitHub: '.$e->getMessage());
             }

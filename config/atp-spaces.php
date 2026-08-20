@@ -45,6 +45,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Lexicons
+    |--------------------------------------------------------------------------
+    |
+    | The space lexicons are vendored and pinned to an upstream commit.
+    | `spaces:lexicon-drift` compares them against that commit through the
+    | GitHub API, which is rate limited to 60 requests an hour unauthenticated.
+    |
+    */
+
+    'lexicons' => [
+        'github_token' => env('GITHUB_TOKEN'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | HTTP
     |--------------------------------------------------------------------------
     */
