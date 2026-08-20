@@ -2,6 +2,8 @@
 
 namespace SocialDept\AtpSpaces\Repo;
 
+use SocialDept\AtpSpaces\Exceptions\RepoVerificationException;
+
 /**
  * The outcome of checking a signed commit.
  *
@@ -38,6 +40,30 @@ class CommitVerification
     public function isIntact(): bool
     {
         return $this->versionSupported && $this->revisionMatches && $this->macValid;
+    }
+
+    /**
+     * Throw unless every check passed, including the signature.
+     *
+     * @throws RepoVerificationException
+     */
+    public function assertFullyVerified(): void
+    {
+        if (! $this->isFullyVerified()) {
+            throw new RepoVerificationException('Commit verification failed: '.$this->failureReason().'.');
+        }
+    }
+
+    /**
+     * Throw unless the hash is bound to its context, ignoring authorship.
+     *
+     * @throws RepoVerificationException
+     */
+    public function assertIntact(): void
+    {
+        if (! $this->isIntact()) {
+            throw new RepoVerificationException('Commit integrity check failed: '.$this->failureReason().'.');
+        }
     }
 
     /**

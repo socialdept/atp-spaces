@@ -4,6 +4,7 @@ namespace SocialDept\AtpSpaces\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
 use SocialDept\AtpSpaces\Contracts\SignatureVerifier;
+use SocialDept\AtpSpaces\Exceptions\RepoVerificationException;
 use SocialDept\AtpSpaces\Repo\CommitContext;
 use SocialDept\AtpSpaces\Repo\RepoCommit;
 use SocialDept\AtpSpaces\Repo\RepoOp;
@@ -214,6 +215,20 @@ class RepoCommitTest extends TestCase
         $this->assertTrue($result->isIntact());
         $this->assertFalse($result->isFullyVerified());
         $this->assertSame('commit signature is invalid', $result->failureReason());
+    }
+
+    public function test_it_can_assert_instead_of_returning(): void
+    {
+        $commit = RepoCommit::fromIndex(['a/1' => 'bafyA']);
+        $result = RepoCommit::verify($this->sign($commit->digest()), $this->context());
+
+        // Integrity passes, so this is a no-op.
+        $result->assertIntact();
+
+        $this->expectException(RepoVerificationException::class);
+        $this->expectExceptionMessage('commit signature was not checked');
+
+        $result->assertFullyVerified();
     }
 
     protected function context(): CommitContext
