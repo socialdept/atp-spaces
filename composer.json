@@ -19,7 +19,7 @@
         "firebase/php-jwt": "^7.0",
         "phpseclib/phpseclib": "^3.0",
         "socialdept/atp-support": "^0.3.2",
-        "socialdept/atp-client": "^0.3"
+        "socialdept/atp-client": "^0.3.3"
     },
     "require-dev": {
         "orchestra/testbench": "^9.0|^10.0|^11.0",

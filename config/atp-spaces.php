@@ -45,6 +45,33 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Managing App
+    |--------------------------------------------------------------------------
+    |
+    | Serve `com.atproto.simplespace.checkUserAccess`, so spaces configured with
+    | `SpacePolicy::managingApp()` can ask this application whether to admit a
+    | user. Off by default, because exposing it without a resolver is pointless
+    | and the route must be publicly reachable by the authority's PDS.
+    |
+    | `resolver` must implement Contracts\SpaceAccessResolver. The default
+    | refuses everyone, so a half-finished setup grants nothing.
+    |
+    | Requests are authenticated with atp-client's `atp.service-auth`
+    | middleware, which checks the token against ATP_SERVICE_AUTH_AUDIENCE.
+    | That audience is the identifier you publish in your DID document and
+    | name in `SpacePolicy::managingApp()`.
+    |
+    */
+
+    'managing_app' => [
+        'enabled' => env('SPACES_MANAGING_APP', false),
+        'path' => env('SPACES_MANAGING_APP_PATH', '/xrpc/com.atproto.simplespace.checkUserAccess'),
+        'resolver' => SocialDept\AtpSpaces\Access\DenyAllAccessResolver::class,
+        'middleware' => [],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Lexicons
     |--------------------------------------------------------------------------
     |
