@@ -97,6 +97,134 @@ Parameters equal to their default are omitted, so the shortest form of a scope
 is the canonical one. Defaults: `authority=self`, `skey=*`, no collections, the
 four non-`read_self` actions, no management operations.
 
+## Reading and writing
+
+Spaces attach to an authenticated [`atp-client`](https://github.com/socialdept/atp-client)
+session as the `space` domain, because the two halves of the protocol authenticate
+differently and it is worth seeing which is which.
+
+**Writes go to your own PDS, under your OAuth session.** You can only ever write to your own
+repo, in a space you belong to:
+
+```php
+use SocialDept\AtpClient\Facades\Atp;
+
+$client = Atp::as('alice.example.com');
+
+$client->space->repo->createRecord($space, 'com.example.thread', [
+    '$type' => 'com.example.thread',
+    'title' => 'Hello',
+]);
+
+$client->space->repo->putRecord($space, 'com.example.thread', '3abc', $record);
+$client->space->repo->deleteRecord($space, 'com.example.thread', '3abc');
+
+$client->space->repo->listSpaces();   // spaces you have written to
+```
+
+**Reads go to each member's own host, under a space credential.** There is no relay for
+permissioned data, so reading a space means visiting its members in turn:
+
+```php
+$reader = $client->space->read($space);
+
+$reader->listRepos();                                  // who is in the space
+$reader->getRecord($memberDid, 'com.example.thread', '3abc');
+$reader->listRecords($memberDid, 'com.example.thread');
+$reader->getBlob($memberDid, $cid);
+```
+
+The credential is minted on first use and cached until it expires.
+
+### Incremental sync
+
+```php
+$result = $reader->listRepoOps($memberDid, since: $cursor);
+
+$repo = RepoCommit::fromState($savedState)->applyOps($result['ops']);
+
+// The commit arrives only once you reach the head of the log — which is
+// exactly when comparing hashes means something.
+if ($result['commit'] && $repo->matches($result['commit'])) {
+    // in sync
+}
+```
+
+The oplog is a transport optimization with no history guarantee: a host may compact or drop
+it. When `since` is too old, fall back to `listRecords()` or `getRepo()`.
+
+## Managing spaces
+
+```php
+use SocialDept\AtpSpaces\Management\AppAccess;
+use SocialDept\AtpSpaces\Management\SpacePolicy;
+
+$space = $client->space->manage->createSpace(
+    type: 'com.example.forum',
+    policy: SpacePolicy::memberList(),
+    appAccess: AppAccess::open(),
+);
+
+$client->space->manage->addMember($space, 'did:plc:someone');
+$client->space->manage->listMembers($space);
+```
+
+A space is anchored on the authenticated user's DID, who becomes its owner.
+
+Three user policies are available. `memberList()` is the default; `public()` admits anyone;
+and `managingApp()` defers the decision to an application:
+
+```php
+SpacePolicy::managingApp('did:web:example.com#forum');
+```
+
+Under that policy the authority calls the named app's `checkUserAccess` each time a
+credential is minted. It is how an application keeps authorization in its own system —
+entitlements, subscriptions, bans, whatever — instead of mirroring state into a member list.
+Serving that endpoint is not implemented yet.
+
+Orthogonally, `AppAccess::allowList([...])` restricts a space to named OAuth clients, checked
+against a client attestation.
+
+## Credentials
+
+Getting into a space is two hops, because the two halves answer different questions. Your PDS
+attests *that this app acts for this user*, in a 60-second single-use delegation token. The
+space authority decides *whether that user may enter*, and issues a credential bound to a key
+only your app holds.
+
+```php
+$credential = $client->space->credential($space);
+
+$credential->expiresAt();
+$credential->isExpired(leeway: 30);
+$credential->isCorrectlyBound();   // checked automatically on issue
+
+$client->space->forget($space);    // discard, forcing a fresh mint
+```
+
+Credentials are cached for their lifetime, keyed by space and user. Configure with
+`atp-spaces.credentials`, or set `SPACES_CREDENTIAL_CACHE=false` to mint one per use.
+
+A credential reads the **whole space** and is presented to every repo host in it. As a bearer
+token that would be a shared secret — a host given one could replay it against its peers — so
+it is bound to a DPoP key instead and presented under the `DPoP` scheme, never `Bearer`.
+
+Refusals arrive as a `CredentialException` that says which perimeter failed:
+
+```php
+try {
+    $reader = $client->space->read($space);
+} catch (CredentialException $e) {
+    $e->isUserRefusal();   // UserNotAuthorized
+    $e->isAppRefusal();    // AppNotAuthorized
+    $e->isSpaceDeleted();  // SpaceDeleted
+}
+```
+
+An authority that does not wish to disclose which perimeter failed returns `NotAuthorized`
+instead, and both predicates are false.
+
 ## Repo state
 
 Permissioned repos have no Merkle search tree. State is the *set* of records a
@@ -195,10 +323,12 @@ authority's `getSpaceCredential` are live there.
 | Addressing, space types, scopes | done |
 | Repo set hash, commits, verification | done |
 | Lexicon vendoring + drift detection | done |
-| Credential broker, read/write client | not yet |
-| Space management (`simplespace`) | not yet |
+| Credential broker (delegation → credential, DPoP-bound) | done |
+| Read/write client | done |
+| Space management (`simplespace`) | done |
 | Managing-app `checkUserAccess` endpoint | not yet |
-| Incremental sync + notifications | not yet |
+| Sync consumer + notification endpoints | not yet |
+| CAR full-state verification (`getRepo`) | returns bytes; not yet parsed |
 
 ## Testing
 
@@ -206,6 +336,14 @@ authority's `getSpaceCredential` are live there.
 composer install
 vendor/bin/phpunit --exclude-group integration
 vendor/bin/php-cs-fixer fix --dry-run --diff
+```
+
+The `integration` group reaches the network — it checks the vendored lexicons against
+upstream and probes the alpha PDS. It is read-only and creates nothing, but it is excluded
+from CI, since a failure there means the world changed rather than the code:
+
+```bash
+vendor/bin/phpunit --group integration
 ```
 
 ## License
