@@ -8,6 +8,7 @@ use SocialDept\AtpSpaces\Auth\SpaceTokenType;
 use SocialDept\AtpSpaces\Enums\SpaceNsid;
 use SocialDept\AtpSpaces\SpaceRecordUri;
 use SocialDept\AtpSpaces\SpaceRef;
+use SocialDept\AtpSpaces\Support\Actor;
 
 /**
  * Writes into the authenticated user's own permissioned repos.
@@ -40,17 +41,18 @@ class SpaceRepoRequestClient extends Request
      * Note this is "spaces I have written to", not "spaces I am a member of" —
      * a PDS only tracks the spaces its user has actually put records in.
      *
+     * @param  string|null  $actor  A DID or handle to filter by authority
      * @return array{spaces: array<int, SpaceRef>, cursor: string|null}
      */
     public function listSpaces(
         ?string $type = null,
-        ?string $did = null,
+        ?string $actor = null,
         ?int $limit = null,
         ?string $cursor = null,
     ): array {
         $response = $this->atp->client->get(SpaceNsid::ListSpaces->value, array_filter([
             'type' => $type,
-            'did' => $did,
+            'did' => $actor === null ? null : Actor::did($actor),
             'limit' => $limit,
             'cursor' => $cursor,
         ], fn ($value) => $value !== null));

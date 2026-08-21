@@ -36,6 +36,10 @@ class CommitContext
 
     /**
      * Build a context for a space reference.
+     *
+     * The author is a **DID only**, never a handle. This value is signed into
+     * the commit, so resolving anything here would change what is being
+     * verified rather than being a convenience.
      */
     public static function for(SpaceRef $space, string $author, string $rev): static
     {

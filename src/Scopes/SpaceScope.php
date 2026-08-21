@@ -3,6 +3,7 @@
 namespace SocialDept\AtpSpaces\Scopes;
 
 use SocialDept\AtpSpaces\SpaceRef;
+use SocialDept\AtpSpaces\Support\Actor;
 use Stringable;
 
 /**
@@ -74,11 +75,21 @@ class SpaceScope implements Stringable
     }
 
     /**
-     * Narrow to a single authority DID.
+     * Narrow to a single authority.
+     *
+     * Accepts a DID or a handle, plus the two wildcards a scope understands:
+     * `self` for the granting user, and `*` for any. A handle is resolved,
+     * since an authorization server matches this string literally.
+     *
+     * @param  string  $authority  A DID, a handle, `self`, or `*`
      */
     public function authority(string $authority): static
     {
-        return $this->with(authority: $authority === '' ? 'self' : $authority);
+        if ($authority === '' || $authority === 'self' || $authority === '*') {
+            return $this->with(authority: $authority === '' ? 'self' : $authority);
+        }
+
+        return $this->with(authority: Actor::did($authority));
     }
 
     /**

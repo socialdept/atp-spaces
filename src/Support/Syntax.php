@@ -30,6 +30,14 @@ class Syntax
     }
 
     /**
+     * Whether a value is a syntactically valid handle.
+     */
+    public static function isHandle(?string $value): bool
+    {
+        return Identity::isHandle($value);
+    }
+
+    /**
      * Whether a value is a syntactically valid NSID.
      */
     public static function isNsid(?string $value): bool

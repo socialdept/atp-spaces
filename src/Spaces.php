@@ -92,9 +92,11 @@ class Spaces
 
     /**
      * Discard a stored credential.
+     *
+     * @param  string  $user  A DID or a handle
      */
-    public function forget(SpaceRef $space, string $userDid): void
+    public function forget(SpaceRef $space, string $user): void
     {
-        $this->broker->forget($space, $userDid);
+        $this->broker->forget($space, $user);
     }
 }

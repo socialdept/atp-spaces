@@ -40,6 +40,7 @@ Think of it as a private corner of the Atmosphere that its owner decides who may
 - **Verifiable state** - Repo commits check out against a set hash computed locally, signature and all
 - **Pinned lexicons** - Upstream definitions vendored verbatim, with a command that detects drift
 - **No app-specific opinions** - Ships no space types of its own, so you register yours
+- **DIDs or handles** - Anywhere an actor is named, either works, matching the rest of the `atp-*` packages
 
 ## Quick Example
 
@@ -51,7 +52,7 @@ $client = Atp::as('alice.example.com');
 
 // Create a space you own, and admit someone
 $space = $client->space->manage->createSpace('com.example.forum', SpacePolicy::memberList());
-$client->space->manage->addMember($space, 'did:plc:bob');
+$client->space->manage->addMember($space, 'bob.example.com');
 
 // Write to your own repo inside it
 $client->space->repo->createRecord($space, 'com.example.thread', [
@@ -63,7 +64,7 @@ $client->space->repo->createRecord($space, 'com.example.thread', [
 $reader = $client->space->read($space);
 
 $reader->listRepos();                                   // who is in the space
-$reader->listRecords('did:plc:bob', 'com.example.thread');
+$reader->listRecords('bob.example.com', 'com.example.thread');
 ```
 
 ## Installation
@@ -172,7 +173,8 @@ $client->space->repo->listSpaces();   // spaces you have written to
 ```
 
 **Reads go to each member's own host, under a space credential.** There is no relay for
-permissioned data, so reading a space means visiting its members in turn.
+permissioned data, so reading a space means visiting its members in turn. Anywhere a member is
+named, a DID or a handle both work. A DID costs nothing, a handle is resolved for you.
 
 ```php
 $reader = $client->space->read($space);
@@ -217,7 +219,7 @@ $space = $client->space->manage->createSpace(
     appAccess: AppAccess::open(),
 );
 
-$client->space->manage->addMember($space, 'did:plc:bob');
+$client->space->manage->addMember($space, 'bob.example.com');
 $client->space->manage->removeMember($space, 'did:plc:bob');
 $client->space->manage->listMembers($space);
 $client->space->manage->updateSpace($space, policy: SpacePolicy::public());

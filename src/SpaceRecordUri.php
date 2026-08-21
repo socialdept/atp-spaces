@@ -3,6 +3,7 @@
 namespace SocialDept\AtpSpaces;
 
 use SocialDept\AtpSpaces\Exceptions\InvalidSpaceRefException;
+use SocialDept\AtpSpaces\Support\Actor;
 use SocialDept\AtpSpaces\Support\Syntax;
 use Stringable;
 
@@ -28,13 +29,13 @@ class SpaceRecordUri implements Stringable
     /**
      * Build a record URI, validating the components the space does not cover.
      *
+     * @param  string  $author  A DID or a handle
+     *
      * @throws InvalidSpaceRefException
      */
     public static function make(SpaceRef $space, string $author, string $collection, string $rkey): static
     {
-        if (! Syntax::isDid($author)) {
-            throw new InvalidSpaceRefException("Record author must be a DID, got \"{$author}\".");
-        }
+        $author = Actor::did($author);
 
         if (! Syntax::isNsid($collection)) {
             throw new InvalidSpaceRefException("Record collection must be an NSID, got \"{$collection}\".");

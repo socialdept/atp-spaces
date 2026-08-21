@@ -11,11 +11,14 @@ use SocialDept\AtpSpaces\Exceptions\SpacesException;
 use SocialDept\AtpSpaces\Repo\RepoOp;
 use SocialDept\AtpSpaces\Repo\SignedCommit;
 use SocialDept\AtpSpaces\SpaceRef;
+use SocialDept\AtpSpaces\Support\Actor;
 use SocialDept\AtpSupport\Resolver;
 use Throwable;
 
 /**
  * Reads a space, repo by repo.
+ *
+ * Every `$repo` argument takes a DID or a handle.
  *
  * There is no relay for permissioned data, so reading a space means visiting
  * each member's own PDS in turn — `listRepos` on the authority says who is in
@@ -72,6 +75,8 @@ class SpaceReader
      */
     public function getRecord(string $repo, string $collection, string $rkey): array
     {
+        $repo = Actor::did($repo);
+
         return $this->get($this->repoUrl($repo, SpaceNsid::GetRecord), [
             'space' => (string) $this->space(),
             'repo' => $repo,
@@ -93,6 +98,8 @@ class SpaceReader
         ?bool $reverse = null,
         bool $excludeValues = false,
     ): array {
+        $repo = Actor::did($repo);
+
         $json = $this->get($this->repoUrl($repo, SpaceNsid::ListRecords), array_filter([
             'space' => (string) $this->space(),
             'repo' => $repo,
@@ -126,6 +133,8 @@ class SpaceReader
         ?string $cursor = null,
         bool $excludeValues = false,
     ): array {
+        $repo = Actor::did($repo);
+
         $json = $this->get($this->repoUrl($repo, SpaceNsid::ListRepoOps), array_filter([
             'space' => (string) $this->space(),
             'repo' => $repo,
@@ -157,6 +166,8 @@ class SpaceReader
      */
     public function getLatestCommit(string $repo): SignedCommit
     {
+        $repo = Actor::did($repo);
+
         $json = $this->get($this->repoUrl($repo, SpaceNsid::GetLatestCommit), [
             'space' => (string) $this->space(),
             'repo' => $repo,
@@ -172,6 +183,8 @@ class SpaceReader
      */
     public function getRepo(string $repo): string
     {
+        $repo = Actor::did($repo);
+
         return $this->send('GET', $this->repoUrl($repo, SpaceNsid::GetRepo), [
             'space' => (string) $this->space(),
             'repo' => $repo,
@@ -183,6 +196,8 @@ class SpaceReader
      */
     public function getBlob(string $repo, string $cid): string
     {
+        $repo = Actor::did($repo);
+
         return $this->send('GET', $this->repoUrl($repo, SpaceNsid::GetBlob), [
             'space' => (string) $this->space(),
             'repo' => $repo,
@@ -197,6 +212,8 @@ class SpaceReader
      */
     public function listBlobs(string $repo, ?int $limit = null, ?string $cursor = null): array
     {
+        $repo = Actor::did($repo);
+
         $json = $this->get($this->repoUrl($repo, SpaceNsid::ListBlobs), array_filter([
             'space' => (string) $this->space(),
             'repo' => $repo,

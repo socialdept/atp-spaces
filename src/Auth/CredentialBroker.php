@@ -12,6 +12,7 @@ use SocialDept\AtpSpaces\Contracts\CredentialStore;
 use SocialDept\AtpSpaces\Enums\SpaceNsid;
 use SocialDept\AtpSpaces\Exceptions\CredentialException;
 use SocialDept\AtpSpaces\SpaceRef;
+use SocialDept\AtpSpaces\Support\Actor;
 use Throwable;
 
 /**
@@ -115,10 +116,12 @@ class CredentialBroker
 
     /**
      * Discard a stored credential, so the next call mints a fresh one.
+     *
+     * @param  string  $user  A DID or a handle
      */
-    public function forget(SpaceRef $space, string $userDid): void
+    public function forget(SpaceRef $space, string $user): void
     {
-        $this->store->forget($space, $userDid);
+        $this->store->forget($space, Actor::did($user));
     }
 
     /**

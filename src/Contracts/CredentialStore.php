@@ -15,6 +15,9 @@ use SocialDept\AtpSpaces\SpaceRef;
  */
 interface CredentialStore
 {
+    // The user is a DID only. These are storage keys, and the broker has
+    // already resolved by the time it calls them.
+
     public function get(SpaceRef $space, string $userDid): ?SpaceCredential;
 
     public function put(SpaceCredential $credential): void;

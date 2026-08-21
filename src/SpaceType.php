@@ -111,6 +111,8 @@ class SpaceType implements Stringable
     /**
      * Address a space of this type.
      *
+     * @param  string  $authority  A DID or a handle
+     *
      * @throws InvalidSpaceRefException
      */
     public function space(string $authority, string $skey): SpaceRef

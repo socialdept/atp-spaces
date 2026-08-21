@@ -2,8 +2,7 @@
 
 namespace SocialDept\AtpSpaces\Management;
 
-use SocialDept\AtpSpaces\Exceptions\InvalidSpaceRefException;
-use SocialDept\AtpSpaces\Support\Syntax;
+use SocialDept\AtpSpaces\Support\Actor;
 
 /**
  * How an authority decides whether to authorize a requesting **user**.
@@ -50,18 +49,16 @@ class SpacePolicy
      * subscriptions, bans, anything — in its own system instead of mirroring
      * it into a member list. The authority calls the app's `checkUserAccess`.
      *
-     * @param  string  $managingApp  A DID with an optional service fragment,
-     *                               e.g. `did:web:example.com#forum`
+     * @param  string  $managingApp  A DID or handle, with an optional service
+     *                               fragment, e.g. `did:web:example.com#forum`
      */
     public static function managingApp(string $managingApp): static
     {
-        $did = explode('#', $managingApp, 2)[0];
+        [$actor, $fragment] = array_pad(explode('#', $managingApp, 2), 2, null);
 
-        if (! Syntax::isDid($did)) {
-            throw new InvalidSpaceRefException("Managing app must be a DID, got \"{$managingApp}\".");
-        }
+        $identifier = Actor::did($actor).($fragment === null ? '' : '#'.$fragment);
 
-        return new static(self::NAMESPACE.'#managingAppPolicy', ['managingApp' => $managingApp]);
+        return new static(self::NAMESPACE.'#managingAppPolicy', ['managingApp' => $identifier]);
     }
 
     public function isPublic(): bool

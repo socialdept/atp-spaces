@@ -3,6 +3,7 @@
 namespace SocialDept\AtpSpaces;
 
 use SocialDept\AtpSpaces\Exceptions\InvalidSpaceRefException;
+use SocialDept\AtpSpaces\Support\Actor;
 use SocialDept\AtpSpaces\Support\Syntax;
 use Stringable;
 
@@ -33,13 +34,13 @@ class SpaceRef implements Stringable
     /**
      * Build a reference, validating each component.
      *
+     * @param  string  $authority  A DID or a handle
+     *
      * @throws InvalidSpaceRefException
      */
     public static function make(string $authority, string $type, string $skey): static
     {
-        if (! Syntax::isDid($authority)) {
-            throw new InvalidSpaceRefException("Space authority must be a DID, got \"{$authority}\".");
-        }
+        $authority = Actor::did($authority);
 
         if (! Syntax::isNsid($type)) {
             throw new InvalidSpaceRefException("Space type must be an NSID, got \"{$type}\".");
@@ -130,6 +131,8 @@ class SpaceRef implements Stringable
 
     /**
      * Address a record inside this space.
+     *
+     * @param  string  $author  A DID or a handle
      */
     public function record(string $author, string $collection, string $rkey): SpaceRecordUri
     {

@@ -49,6 +49,9 @@ class AuthorityResolver
     /**
      * Resolve an authority by DID.
      *
+     * A DID only, as the name says. Resolve a handle first, or use
+     * {@see self::forSpace()}, whose reference already carries one.
+     *
      * @throws AuthorityResolutionException
      */
     public function forDid(string $did, bool $useCache = true): SpaceAuthority

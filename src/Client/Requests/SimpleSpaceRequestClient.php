@@ -7,6 +7,7 @@ use SocialDept\AtpSpaces\Enums\SimpleSpaceNsid;
 use SocialDept\AtpSpaces\Management\AppAccess;
 use SocialDept\AtpSpaces\Management\SpacePolicy;
 use SocialDept\AtpSpaces\SpaceRef;
+use SocialDept\AtpSpaces\Support\Actor;
 
 /**
  * Space lifecycle and membership, through the baseline `simplespace` scheme.
@@ -88,12 +89,14 @@ class SimpleSpaceRequestClient extends Request
 
     /**
      * Add a member. Requires auth as the space owner.
+     *
+     * @param  string  $actor  A DID or a handle
      */
-    public function addMember(SpaceRef|string $space, string $did): bool
+    public function addMember(SpaceRef|string $space, string $actor): bool
     {
         $this->atp->client->post(SimpleSpaceNsid::AddMember->value, [
             'space' => (string) $space,
-            'did' => $did,
+            'did' => Actor::did($actor),
         ]);
 
         return true;
@@ -101,12 +104,14 @@ class SimpleSpaceRequestClient extends Request
 
     /**
      * Remove a member. Requires auth as the space owner.
+     *
+     * @param  string  $actor  A DID or a handle
      */
-    public function removeMember(SpaceRef|string $space, string $did): bool
+    public function removeMember(SpaceRef|string $space, string $actor): bool
     {
         $this->atp->client->post(SimpleSpaceNsid::RemoveMember->value, [
             'space' => (string) $space,
-            'did' => $did,
+            'did' => Actor::did($actor),
         ]);
 
         return true;
