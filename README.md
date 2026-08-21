@@ -316,6 +316,38 @@ Bluesky runs a public alpha PDS with spaces enabled at
 `.spaces-alpha.bsky.network`, invite required). Both the repo endpoints and the
 authority's `getSpaceCredential` are live there.
 
+The full lifecycle has been exercised against it with three real accounts — create a space,
+add a member, write, read another member's repo through a credential, get refused as a
+non-member, and tear it all down. The set hash computed here matched the commit that PDS
+signed.
+
+Two notes for anyone doing the same:
+
+- **App passwords do not work.** The space endpoints require `ACCESS_FULL`
+  (`com.atproto.access`), which excludes both `AppPass` and `AppPassPrivileged`. Use OAuth.
+- **Only loopback redirects are accepted** for `http://` clients — `localhost`, `127.0.0.1`,
+  or `[::1]`. A LAN or tailnet address is rejected outright.
+
+`space:` scopes are accepted by the authorization server and come back granted verbatim, even
+though its `scopes_supported` metadata does not list them.
+
+## Gotchas
+
+**`listSpaces` is a hint, not a roster.** It reports spaces the user has *written to*, and a
+member's per-space repo survives the space being deleted — as an empty shell no method
+removes. `getDelegationToken` also succeeds for spaces that never existed, since the PDS
+mints tokens without checking. The durable signal is one hop later:
+
+```php
+try {
+    $reader = $client->space->read($space);
+} catch (CredentialException $e) {
+    if ($e->isSpaceDeleted()) { /* prune it */ }
+}
+```
+
+Let credential renewal be what prunes dead spaces.
+
 ## Status
 
 | | |
