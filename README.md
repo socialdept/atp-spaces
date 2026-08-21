@@ -15,8 +15,10 @@
 ---
 
 > [!WARNING]
-> **Spaces are an alpha AT Protocol extension.** The lexicons this package is built against are
-> still moving, and so is this package. Pin a version, and expect breaking changes.
+> **Don't use this in production.** Spaces are an alpha AT Protocol extension. The lexicons this
+> package is built against are still moving, and so is this package. Only alpha PDS software
+> serves these endpoints today. Pin a version, expect breaking changes, and treat anything you
+> store as throwaway.
 
 ## What is Spaces?
 
