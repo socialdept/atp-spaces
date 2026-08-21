@@ -77,6 +77,14 @@ class SpaceLifecycleTest extends TestCase
                 $this->markTestSkipped("No authorized account found for \"{$required}\".");
             }
         }
+
+        // Access tokens last an hour. Say so plainly, rather than letting every
+        // assertion fail on a 401 that looks like a protocol change.
+        foreach (glob(rtrim($directory, '/').'/tokens-*.json') ?: [] as $file) {
+            if (! OAuthActor::isFresh($file)) {
+                $this->markTestSkipped('Access tokens have expired — run `php dev/oauth.php refresh`.');
+            }
+        }
     }
 
     /**
