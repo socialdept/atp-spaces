@@ -145,10 +145,58 @@ if ($command === 'exchange' && $handle !== '' && ! empty($argv[3])) {
     exit(0);
 }
 
+if ($command === 'refresh') {
+    $files = $handle !== ''
+        ? ["{$dir}/tokens-{$handle}.json"]
+        : (glob("{$dir}/tokens-*.json") ?: []);
+
+    $failed = 0;
+
+    foreach ($files as $file) {
+        $stored = json_decode((string) @file_get_contents($file), true);
+
+        if (! is_array($stored) || empty($stored['refresh_token'])) {
+            fwrite(STDERR, "no refresh token in {$file}".PHP_EOL);
+            $failed++;
+
+            continue;
+        }
+
+        $proof = new DpopProof(DpopKeypair::fromPem($stored['dpop_pem']));
+        $nonce = $stored['dpop_nonce'] ?? null;
+
+        [$status, $body] = post($stored['host'].'/oauth/token', [
+            'grant_type' => 'refresh_token',
+            'refresh_token' => $stored['refresh_token'],
+            'client_id' => $stored['client_id'],
+        ], $proof, $nonce);
+
+        if ($status !== 200 || empty($body['access_token'])) {
+            fwrite(STDERR, "refresh failed for {$stored['handle']} ({$status}): ".json_encode($body).PHP_EOL);
+            $failed++;
+
+            continue;
+        }
+
+        // Refresh tokens are single-use: persist the replacement immediately.
+        file_put_contents($file, json_encode(array_merge($stored, [
+            'access_token' => $body['access_token'],
+            'refresh_token' => $body['refresh_token'] ?? $stored['refresh_token'],
+            'expires_at' => time() + (int) ($body['expires_in'] ?? 0),
+            'dpop_nonce' => $nonce,
+        ]), JSON_PRETTY_PRINT));
+
+        echo "refreshed {$stored['handle']} (+".($body['expires_in'] ?? '?')."s)".PHP_EOL;
+    }
+
+    exit($failed === 0 ? 0 : 1);
+}
+
 fwrite(STDERR, <<<USAGE
 usage:
   php dev/oauth.php authorize <handle>
   php dev/oauth.php exchange  <handle> <callback-url>
+  php dev/oauth.php refresh   [handle]      # all accounts when omitted
 
 tokens are written to ATP_SPACES_TOKENS (default ./.oauth)
 

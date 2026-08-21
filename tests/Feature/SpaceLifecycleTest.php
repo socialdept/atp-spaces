@@ -9,8 +9,10 @@ use SocialDept\AtpSpaces\Auth\SpaceCredential;
 use SocialDept\AtpSpaces\Auth\SpaceToken;
 use SocialDept\AtpSpaces\Auth\SpaceTokenType;
 use SocialDept\AtpSpaces\Client\SpaceReader;
+use SocialDept\AtpSpaces\Contracts\SignatureVerifier;
 use SocialDept\AtpSpaces\Management\AppAccess;
 use SocialDept\AtpSpaces\Management\SpacePolicy;
+use SocialDept\AtpSpaces\Repo\CommitContext;
 use SocialDept\AtpSpaces\Repo\RepoCommit;
 use SocialDept\AtpSpaces\Repo\RepoOp;
 use SocialDept\AtpSpaces\SpaceRef;
@@ -18,6 +20,7 @@ use SocialDept\AtpSpaces\Spaces;
 use SocialDept\AtpSpaces\Tests\Support\DpopHttp;
 use SocialDept\AtpSpaces\Tests\Support\OAuthActor;
 use SocialDept\AtpSpaces\Tests\TestCase;
+use SocialDept\AtpSupport\Resolver;
 
 /**
  * The whole feature, against a real PDS.
@@ -213,6 +216,40 @@ class SpaceLifecycleTest extends TestCase
             $listed->matches($result['commit']),
             'record listing: '.bin2hex($listed->digest()),
         );
+
+        // Finally, authenticity: the signature is over the commit context, and
+        // the MAC is what ties the hash we just matched to that context. Both
+        // have to hold for the hash to mean anything.
+        $didKey = $this->app->make(Resolver::class)->resolveDid($dad->did)->getSigningKey();
+        $this->assertNotNull($didKey, 'the author publishes an #atproto key');
+
+        $verification = RepoCommit::verify(
+            $result['commit'],
+            CommitContext::for($this->space, $dad->did, $result['commit']->rev),
+            $this->app->make(SignatureVerifier::class),
+            $didKey,
+        );
+
+        $this->assertTrue($verification->macValid, 'mac binds the hash to the context');
+        $this->assertTrue($verification->signatureChecked);
+        $this->assertTrue(
+            $verification->isFullyVerified(),
+            'commit failed verification: '.($verification->failureReason() ?? '-'),
+        );
+
+        // A commit is signed for one space; it must not verify for another.
+        $elsewhere = RepoCommit::verify(
+            $result['commit'],
+            CommitContext::for(
+                SpaceRef::make($dad->did, self::SPACE_TYPE, 'a-different-space'),
+                $dad->did,
+                $result['commit']->rev,
+            ),
+            $this->app->make(SignatureVerifier::class),
+            $didKey,
+        );
+
+        $this->assertFalse($elsewhere->isFullyVerified());
     }
 
     /**
