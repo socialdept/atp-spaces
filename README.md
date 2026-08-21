@@ -370,13 +370,29 @@ vendor/bin/phpunit --exclude-group integration
 vendor/bin/php-cs-fixer fix --dry-run --diff
 ```
 
-The `integration` group reaches the network — it checks the vendored lexicons against
-upstream and probes the alpha PDS. It is read-only and creates nothing, but it is excluded
-from CI, since a failure there means the world changed rather than the code:
+The `integration` group reaches the network. Most of it is read-only — it checks the vendored
+lexicons against upstream and probes the alpha PDS — and it is excluded from CI, since a
+failure there means the world changed rather than the code:
 
 ```bash
 vendor/bin/phpunit --group integration
 ```
+
+`SpaceLifecycleTest` goes further and exercises the whole feature against a live PDS: create a
+space, admit a member, write, read another member's repo through a credential, confirm a
+non-member is refused, and verify a signed commit against a locally computed set hash. It
+needs three OAuth-authorized accounts and **skips** without them.
+
+```bash
+php dev/oauth.php authorize alice.spaces-alpha.bsky.network
+# approve in a browser, then copy the failed callback URL
+php dev/oauth.php exchange alice.spaces-alpha.bsky.network '<callback-url>'
+
+ATP_SPACES_TOKENS=./.oauth vendor/bin/phpunit --group integration
+```
+
+It cleans up after itself, but each run leaves one empty repo shell on the member's account —
+see the gotcha above — so point it at throwaway accounts.
 
 ## License
 
