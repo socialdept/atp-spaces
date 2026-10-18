@@ -15,7 +15,7 @@
         "illuminate/support": "^11.0|^12.0|^13.0",
         "illuminate/console": "^11.0|^12.0|^13.0",
         "illuminate/http": "^11.0|^12.0|^13.0",
-        "guzzlehttp/guzzle": "^7.5",
+        "guzzlehttp/guzzle": "^7.5|^8.0",
         "firebase/php-jwt": "^7.0",
         "phpseclib/phpseclib": "^3.0",
         "socialdept/atp-support": "^0.3.2",
