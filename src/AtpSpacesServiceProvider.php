@@ -3,8 +3,10 @@
 namespace SocialDept\AtpSpaces;
 
 use Illuminate\Http\Client\Factory as HttpFactory;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use SocialDept\AtpClient\AtpClient;
+use SocialDept\AtpSpaces\Access\DenyAllAccessResolver;
 use SocialDept\AtpSpaces\Auth\CredentialBroker;
 use SocialDept\AtpSpaces\Authority\AuthorityResolver;
 use SocialDept\AtpSpaces\Cache\CacheCredentialStore;
@@ -14,8 +16,11 @@ use SocialDept\AtpSpaces\Console\LexiconDriftCommand;
 use SocialDept\AtpSpaces\Contracts\Blake3Hasher;
 use SocialDept\AtpSpaces\Contracts\CredentialStore;
 use SocialDept\AtpSpaces\Contracts\SignatureVerifier;
+use SocialDept\AtpSpaces\Contracts\SpaceAccessResolver;
 use SocialDept\AtpSpaces\Crypto\Blake3;
 use SocialDept\AtpSpaces\Crypto\SupportSignatureVerifier;
+use SocialDept\AtpSpaces\Enums\SimpleSpaceNsid;
+use SocialDept\AtpSpaces\Http\Controllers\CheckUserAccessController;
 use SocialDept\AtpSpaces\Lexicons\LexiconManifest;
 use SocialDept\AtpSupport\Resolver;
 
@@ -34,6 +39,13 @@ class AtpSpacesServiceProvider extends ServiceProvider
         // Commit authenticity is checkable out of the box now; swap this out
         // to verify against something other than a published did:key.
         $this->app->singleton(SignatureVerifier::class, fn () => new SupportSignatureVerifier());
+
+        // Refuses everyone unless the application binds its own.
+        $this->app->singleton(SpaceAccessResolver::class, function ($app) {
+            $resolver = $app['config']['atp-spaces.managing_app.resolver'] ?? DenyAllAccessResolver::class;
+
+            return $app->make($resolver);
+        });
 
         $this->app->singleton(LexiconManifest::class, fn () => LexiconManifest::load());
 
@@ -109,9 +121,37 @@ class AtpSpacesServiceProvider extends ServiceProvider
         // Reads like the rest of the client: `$client->space->…`.
         AtpClient::extend('space', fn (AtpClient $atp) => new SpaceDomainClient($atp));
 
+        $this->registerManagingAppRoute();
+
         if ($this->app->runningInConsole()) {
             $this->bootForConsole();
         }
+    }
+
+    /**
+     * Expose `checkUserAccess`, so an authority can ask this application
+     * whether to admit a user.
+     *
+     * Opt-in: the route must be reachable from the public internet, and it
+     * answers questions about who can read what.
+     */
+    protected function registerManagingAppRoute(): void
+    {
+        if (! ($this->app['config']['atp-spaces.managing_app.enabled'] ?? false)) {
+            return;
+        }
+
+        $path = $this->app['config']['atp-spaces.managing_app.path']
+            ?? '/xrpc/com.atproto.simplespace.checkUserAccess';
+
+        $middleware = array_merge(
+            ['atp.service-auth:'.SimpleSpaceNsid::CheckUserAccess->value],
+            (array) ($this->app['config']['atp-spaces.managing_app.middleware'] ?? []),
+        );
+
+        Route::get($path, CheckUserAccessController::class)
+            ->middleware($middleware)
+            ->name('atp-spaces.check-user-access');
     }
 
     /**
@@ -124,6 +164,7 @@ class AtpSpacesServiceProvider extends ServiceProvider
         return [
             Blake3Hasher::class,
             SignatureVerifier::class,
+            SpaceAccessResolver::class,
             LexiconManifest::class,
             SpaceTypeRegistry::class,
             AuthorityResolver::class,
