@@ -9,15 +9,17 @@ use SocialDept\AtpClient\Data\ServiceAuthToken;
 use SocialDept\AtpClient\Http\Middleware\VerifyServiceAuthMiddleware;
 use SocialDept\AtpSpaces\Access\SpaceAccessRequest;
 use SocialDept\AtpSpaces\Contracts\SpaceAccessResolver;
+use SocialDept\AtpSpaces\Enums\SpaceAccess;
 use SocialDept\AtpSpaces\SpaceRef;
 use Throwable;
 
 /**
  * Serves `com.atproto.simplespace.checkUserAccess`.
  *
- * A space authority calls this when its policy is `managingApp` and someone
- * asks for a credential. The reply is a single boolean, and every path that
- * is not a confident yes answers no.
+ * A space authority calls this when a read or write policy is `managingApp`:
+ * for read when someone asks for a credential, for write when a member
+ * writes. The reply is a single boolean, and every path that is not a
+ * confident yes answers no.
  *
  * The service auth middleware has already proven *some* service signed the
  * request for this method. It cannot check the one thing that matters most
@@ -37,11 +39,12 @@ class CheckUserAccessController
     {
         $space = SpaceRef::tryParse((string) $request->query('space', ''));
         $user = (string) $request->query('user', '');
+        $access = SpaceAccess::tryFrom((string) $request->query('access', ''));
 
-        if ($space === null || $user === '') {
+        if ($space === null || $user === '' || $access === null) {
             return response()->json([
                 'error' => 'InvalidRequest',
-                'message' => 'Both "space" and "user" are required.',
+                'message' => '"space", "user" and "access" (read or write) are required.',
             ], 400);
         }
 
@@ -62,6 +65,7 @@ class CheckUserAccessController
             $authorized = $this->resolver->authorize(new SpaceAccessRequest(
                 $space,
                 $user,
+                $access,
                 is_string($clientId) && $clientId !== '' ? $clientId : null,
                 $token->issuer,
             ));

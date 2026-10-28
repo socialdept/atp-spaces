@@ -49,6 +49,11 @@ class SpaceReader
      * Who holds a repo in this space.
      *
      * Served by the authority, since no single member knows the whole roster.
+     * Each entry is a writer's latest state, `{ did, repoRev, data, spaceRev }`,
+     * in ascending `spaceRev`. The cursor is the last entry's `spaceRev`, an
+     * exclusive checkpoint: pass it back to read on, and an empty page, which
+     * has no cursor, means caught up. A repo updated mid-listing can appear
+     * twice.
      *
      * @return array{repos: array<int, array<string, mixed>>, cursor: string|null}
      */

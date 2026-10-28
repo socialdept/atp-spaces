@@ -26,6 +26,7 @@ class CheckUserAccessDisabledTest extends TestCase
         $this->assertFalse($resolver->authorize(new \SocialDept\AtpSpaces\Access\SpaceAccessRequest(
             \SocialDept\AtpSpaces\SpaceRef::make('did:plc:authority', 'com.example.forum', 'main'),
             'did:plc:reader',
+            \SocialDept\AtpSpaces\Enums\SpaceAccess::Read,
             null,
             'did:plc:authority',
         )));

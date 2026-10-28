@@ -59,15 +59,24 @@ class LexiconManifestTest extends TestCase
         $this->assertSame('query', $document['defs']['main']['type']);
     }
 
-    public function test_the_signed_commit_definition_matches_our_dto(): void
+    public function test_the_commit_definition_has_the_fields_we_read(): void
     {
         $defs = LexiconManifest::load()->document('com.atproto.space.defs');
-        $properties = $defs['defs']['signedCommit']['properties'];
+        $properties = $defs['defs']['commit']['properties'];
 
         $this->assertSame(
-            ['ver', 'hash', 'ikm', 'sig', 'mac', 'rev'],
+            ['ver', 'repo', 'space', 'rev', 'data'],
             array_keys($properties),
         );
+    }
+
+    public function test_it_carries_the_simplespace_member_and_revocation_methods(): void
+    {
+        $nsids = LexiconManifest::load()->nsids();
+
+        $this->assertContains('com.atproto.simplespace.putMember', $nsids);
+        $this->assertContains('com.atproto.space.notifyCredentialRevoked', $nsids);
+        $this->assertNotContains('com.atproto.simplespace.addMember', $nsids);
     }
 
     public function test_an_unknown_nsid_has_no_document(): void

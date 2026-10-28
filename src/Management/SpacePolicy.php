@@ -5,10 +5,12 @@ namespace SocialDept\AtpSpaces\Management;
 use SocialDept\AtpSpaces\Support\Actor;
 
 /**
- * How an authority decides whether to authorize a requesting **user**.
+ * How an authority decides whether to authorize a requesting **user**, for
+ * reading a space or for writing to it. A space has one of each.
  *
- * Evaluated when a credential is minted, not when a record is read — so a
- * change takes effect within one credential lifetime rather than immediately.
+ * A read policy is evaluated when a credential is minted, not when a record is
+ * read, so a change takes effect within one credential lifetime rather than
+ * immediately. A write policy decides whose writes the authority tracks.
  */
 class SpacePolicy
 {
@@ -43,7 +45,8 @@ class SpacePolicy
     }
 
     /**
-     * The named app is asked, per request, whether to authorize each user.
+     * The named app is asked, per request, whether to authorize each user to
+     * read or write.
      *
      * This is how an application keeps authorization logic — entitlements,
      * subscriptions, bans, anything — in its own system instead of mirroring

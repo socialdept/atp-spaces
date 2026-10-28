@@ -37,6 +37,7 @@ enum SpaceNsid: string
     case UnregisterNotify = 'com.atproto.space.unregisterNotify';
     case NotifyWrite = 'com.atproto.space.notifyWrite';
     case NotifySpaceDeleted = 'com.atproto.space.notifySpaceDeleted';
+    case NotifyCredentialRevoked = 'com.atproto.space.notifyCredentialRevoked';
 
     /**
      * Whether the user's own PDS serves this method under OAuth.

@@ -118,8 +118,9 @@ class SpaceLifecycleTest extends TestCase
 
         // ── The owner creates a space and admits one member.
         [$status, $body] = $dad->call('POST', 'com.atproto.simplespace.createSpace', [
-            'type' => self::SPACE_TYPE,
-            'policy' => SpacePolicy::memberList()->toArray(),
+            'spaceType' => self::SPACE_TYPE,
+            'readPolicy' => SpacePolicy::memberList()->toArray(),
+            'writePolicy' => SpacePolicy::memberList()->toArray(),
             'appAccess' => AppAccess::open()->toArray(),
         ]);
 
@@ -129,11 +130,13 @@ class SpaceLifecycleTest extends TestCase
         $this->assertSame($dad->did, $this->space->authority);
         $this->assertSame(self::SPACE_TYPE, $this->space->type);
 
-        [$status] = $dad->call('POST', 'com.atproto.simplespace.addMember', [
+        [$status] = $dad->call('POST', 'com.atproto.simplespace.putMember', [
             'space' => (string) $this->space,
             'did' => $mom->did,
+            'read' => true,
+            'write' => true,
         ]);
-        $this->assertSame(200, $status, 'addMember');
+        $this->assertSame(200, $status, 'putMember');
 
         // ── Both members write into their own repos.
         foreach ([$dad, $mom] as $author) {
@@ -180,16 +183,19 @@ class SpaceLifecycleTest extends TestCase
         [$dad, $mom] = [$this->actors['dad'], $this->actors['mom']];
 
         [$status, $body] = $dad->call('POST', 'com.atproto.simplespace.createSpace', [
-            'type' => self::SPACE_TYPE,
-            'policy' => SpacePolicy::memberList()->toArray(),
+            'spaceType' => self::SPACE_TYPE,
+            'readPolicy' => SpacePolicy::memberList()->toArray(),
+            'writePolicy' => SpacePolicy::memberList()->toArray(),
             'appAccess' => AppAccess::open()->toArray(),
         ]);
         $this->assertSame(200, $status, 'createSpace: '.json_encode($body));
 
         $this->space = SpaceRef::parse((string) $body['uri']);
-        $dad->call('POST', 'com.atproto.simplespace.addMember', [
+        $dad->call('POST', 'com.atproto.simplespace.putMember', [
             'space' => (string) $this->space,
             'did' => $mom->did,
+            'read' => true,
+            'write' => true,
         ]);
 
         [$status] = $dad->call('POST', 'com.atproto.space.createRecord', [
@@ -269,16 +275,19 @@ class SpaceLifecycleTest extends TestCase
         [$dad, $mom] = [$this->actors['dad'], $this->actors['mom']];
 
         [$status, $body] = $dad->call('POST', 'com.atproto.simplespace.createSpace', [
-            'type' => self::SPACE_TYPE,
-            'policy' => SpacePolicy::memberList()->toArray(),
+            'spaceType' => self::SPACE_TYPE,
+            'readPolicy' => SpacePolicy::memberList()->toArray(),
+            'writePolicy' => SpacePolicy::memberList()->toArray(),
             'appAccess' => AppAccess::open()->toArray(),
         ]);
         $this->assertSame(200, $status);
 
         $space = SpaceRef::parse((string) $body['uri']);
-        $dad->call('POST', 'com.atproto.simplespace.addMember', [
+        $dad->call('POST', 'com.atproto.simplespace.putMember', [
             'space' => (string) $space,
             'did' => $mom->did,
+            'read' => true,
+            'write' => true,
         ]);
 
         [$status] = $dad->call('POST', 'com.atproto.simplespace.deleteSpace', ['space' => (string) $space]);
