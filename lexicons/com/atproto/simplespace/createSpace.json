@@ -9,9 +9,9 @@
         "encoding": "application/json",
         "schema": {
           "type": "object",
-          "required": ["type", "policy", "appAccess"],
+          "required": ["spaceType", "readPolicy", "writePolicy", "appAccess"],
           "properties": {
-            "type": {
+            "spaceType": {
               "type": "string",
               "format": "nsid",
               "description": "The NSID of the space type, describing the modality of the space (e.g. app.bsky.group, app.bsky.personal)."
@@ -21,9 +21,18 @@
               "format": "record-key",
               "description": "The space key. Used to differentiate multiple spaces of the same type under the same owner. Same syntax requirements as a record key. If not provided, one will be auto-generated (TID)."
             },
-            "policy": {
+            "readPolicy": {
               "type": "union",
-              "description": "How the authority decides whether to authorize a requesting user.",
+              "description": "How the authority decides whether to authorize a user to read the space.",
+              "refs": [
+                "com.atproto.simplespace.defs#publicPolicy",
+                "com.atproto.simplespace.defs#memberListPolicy",
+                "com.atproto.simplespace.defs#managingAppPolicy"
+              ]
+            },
+            "writePolicy": {
+              "type": "union",
+              "description": "How the authority decides whether to track and forward a user's write notifications.",
               "refs": [
                 "com.atproto.simplespace.defs#publicPolicy",
                 "com.atproto.simplespace.defs#memberListPolicy",
@@ -62,7 +71,7 @@
         },
         {
           "name": "UnsupportedPolicy",
-          "description": "The requested policy is not one the host implements."
+          "description": "A requested policy is not one the host implements."
         },
         {
           "name": "UnsupportedAppAccess",

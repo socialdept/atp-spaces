@@ -9,6 +9,7 @@ use phpseclib3\Math\BigInteger;
 use SocialDept\AtpClient\Auth\ServiceAuth;
 use SocialDept\AtpSpaces\Access\SpaceAccessRequest;
 use SocialDept\AtpSpaces\Contracts\SpaceAccessResolver;
+use SocialDept\AtpSpaces\Enums\SpaceAccess;
 use SocialDept\AtpSpaces\SpaceRef;
 use SocialDept\AtpSpaces\Tests\TestCase;
 use SocialDept\AtpSupport\Crypto\Base58;
@@ -107,10 +108,38 @@ class CheckUserAccessTest extends TestCase
 
         $this->assertSame((string) $this->space(), (string) $seen->space);
         $this->assertSame(self::USER, $seen->user);
+        $this->assertSame(SpaceAccess::Read, $seen->access);
+        $this->assertTrue($seen->isRead());
         $this->assertSame('https://app.example.com/client-metadata.json', $seen->clientId);
         $this->assertTrue($seen->hasClient());
         $this->assertFalse($seen->isOwner());
         $this->assertSame(self::AUTHORITY, $seen->authority);
+    }
+
+    public function test_the_resolver_is_told_when_the_question_is_about_writing(): void
+    {
+        $seen = null;
+        $this->resolve(function (SpaceAccessRequest $request) use (&$seen) {
+            $seen = $request;
+
+            return true;
+        });
+
+        $this->call('GET', self::PATH, $this->params(['access' => 'write']), [], [], $this->authHeader())
+            ->assertOk();
+
+        $this->assertSame(SpaceAccess::Write, $seen->access);
+        $this->assertTrue($seen->isWrite());
+        $this->assertFalse($seen->hasClient(), 'A write check carries no client.');
+    }
+
+    public function test_an_unknown_access_is_rejected(): void
+    {
+        $this->resolve(fn () => $this->fail('the resolver must not be consulted'));
+
+        $this->call('GET', self::PATH, $this->params(['access' => 'admin']), [], [], $this->authHeader())
+            ->assertStatus(400)
+            ->assertJson(['error' => 'InvalidRequest']);
     }
 
     public function test_it_recognises_the_space_owner(): void
@@ -152,7 +181,7 @@ class CheckUserAccessTest extends TestCase
     {
         $this->resolve(fn () => true);
 
-        $headers = $this->authHeader(issuer: self::AUTHORITY.'#atproto_space_host');
+        $headers = $this->authHeader(issuer: self::AUTHORITY.'#atproto_pds');
 
         $this->call('GET', self::PATH, $this->params(), [], [], $headers)
             ->assertOk()
@@ -222,6 +251,7 @@ class CheckUserAccessTest extends TestCase
         return array_merge([
             'space' => (string) $this->space(),
             'user' => self::USER,
+            'access' => 'read',
         ], $overrides);
     }
 

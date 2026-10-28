@@ -15,7 +15,7 @@ enum SimpleSpaceNsid: string
     case UpdateSpace = 'com.atproto.simplespace.updateSpace';
     case DeleteSpace = 'com.atproto.simplespace.deleteSpace';
     case GetSpace = 'com.atproto.simplespace.getSpace';
-    case AddMember = 'com.atproto.simplespace.addMember';
+    case PutMember = 'com.atproto.simplespace.putMember';
     case RemoveMember = 'com.atproto.simplespace.removeMember';
     case ListMembers = 'com.atproto.simplespace.listMembers';
 

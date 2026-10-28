@@ -54,7 +54,7 @@ $client = Atp::as('alice.example.com');
 
 // Create a space you own, and admit someone
 $space = $client->space->manage->createSpace('com.example.forum', SpacePolicy::memberList());
-$client->space->manage->addMember($space, 'bob.example.com');
+$client->space->manage->putMember($space, 'bob.example.com');
 
 // Write to your own repo inside it
 $client->space->repo->createRecord($space, 'com.example.thread', [
@@ -216,21 +216,29 @@ use SocialDept\AtpSpaces\Management\AppAccess;
 use SocialDept\AtpSpaces\Management\SpacePolicy;
 
 $space = $client->space->manage->createSpace(
-    type: 'com.example.forum',
-    policy: SpacePolicy::memberList(),
+    spaceType: 'com.example.forum',
+    readPolicy: SpacePolicy::memberList(),
+    writePolicy: SpacePolicy::memberList(),
     appAccess: AppAccess::open(),
 );
 
-$client->space->manage->addMember($space, 'bob.example.com');
+$client->space->manage->putMember($space, 'bob.example.com');                 // read and write
+$client->space->manage->putMember($space, 'carol.example.com', write: false); // read only
 $client->space->manage->removeMember($space, 'did:plc:bob');
-$client->space->manage->listMembers($space);
-$client->space->manage->updateSpace($space, policy: SpacePolicy::public());
+$client->space->manage->listMembers($space);   // each with did, read and write
+$client->space->manage->updateSpace($space, readPolicy: SpacePolicy::public());
 $client->space->manage->deleteSpace($space);
 ```
 
+`putMember()` sets both permissions at once, replacing what the member had. `addMember()` still
+works, as a deprecated shortcut for a member who may read and write.
+
 ### Access policies
 
-How the authority decides whether to admit a **user**:
+A space has two policies, one for reading and one for writing. The read policy decides who is
+issued a credential, and so who can see the space. The write policy decides whose repo the
+authority tracks and whose writes it forwards to readers. Nobody can be stopped from writing
+into their own repo, only from being counted in the space. Each is one of:
 
 | Policy | Behaviour |
 |--------|-----------|
@@ -238,9 +246,10 @@ How the authority decides whether to admit a **user**:
 | `SpacePolicy::public()` | Anyone who asks. |
 | `SpacePolicy::managingApp($did)` | Your application is asked, per request. |
 
-`managingApp` is the interesting one. The authority calls your app's `checkUserAccess` each time
-a credential is minted, so authorization stays in your own system instead of being mirrored
-into a member list. Entitlements, subscriptions, bans, whatever you already have.
+`managingApp` is the interesting one. The authority calls your app's `checkUserAccess`, for
+reading each time a credential is minted and for writing when a member writes, so authorization
+stays in your own system instead of being mirrored into a member list. Entitlements,
+subscriptions, bans, whatever you already have.
 
 See [Answering for a space](#answering-for-a-space) to serve that endpoint.
 
@@ -254,7 +263,7 @@ Orthogonally, how it decides whether to admit an **app**:
 ## Answering for a Space
 
 When a space uses `SpacePolicy::managingApp()`, the authority calls your application to ask
-whether a user may enter. Implement a resolver:
+whether a user may read the space, or write to it. Implement a resolver:
 
 ```php
 use SocialDept\AtpSpaces\Access\SpaceAccessRequest;
@@ -266,6 +275,11 @@ class SubscriberAccess implements SpaceAccessResolver
     {
         if ($request->isOwner()) {
             return true;
+        }
+
+        // Subscribers read, and only staff write.
+        if ($request->isWrite()) {
+            return Staff::query()->where('did', $request->user)->exists();
         }
 
         return Subscription::query()
