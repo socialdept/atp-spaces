@@ -39,11 +39,10 @@ enum SpaceTokenType: string
     }
 
     /**
-     * The default `kid`, or null when the signer supplies its own.
+     * The `kid` the header must carry, or null when the signer names its own.
      *
-     * An authority publishing a dedicated `#atproto_space` key signs with it
-     * and passes that kid. Absent one — the case for any authority hosted on a
-     * PDS — the space signing key is the account's `#atproto` key.
+     * Delegation tokens and credentials are signed with the account's
+     * `#atproto` key, and verifiers refuse any other kid, including none.
      */
     public function defaultKid(): ?string
     {
@@ -60,7 +59,7 @@ enum SpaceTokenType: string
     {
         return match ($this) {
             self::Delegation, self::ClientAttestation => 60,
-            self::Credential => 7200,
+            self::Credential => 600,
         };
     }
 
@@ -68,7 +67,7 @@ enum SpaceTokenType: string
      * Whether an `aud` is mandatory.
      *
      * A credential has none: it is multi-use across repo hosts and bound to a
-     * DPoP key instead.
+     * key instead, with the audience signed into each request.
      */
     public function requiresAudience(): bool
     {
@@ -76,7 +75,7 @@ enum SpaceTokenType: string
     }
 
     /**
-     * Whether a `cnf.jkt` DPoP binding is mandatory.
+     * Whether a `cnf.kid` key binding is mandatory.
      */
     public function requiresConfirmation(): bool
     {

@@ -7,8 +7,8 @@ use SocialDept\AtpSpaces\SpaceRef;
 /**
  * A space credential together with the key it is bound to.
  *
- * The two travel as one: a credential without its DPoP key is unusable, and a
- * key without its credential proves nothing. Anything that persists one must
+ * The two travel as one: a credential without its key is unusable, and a key
+ * without its credential proves nothing. Anything that persists one must
  * persist both.
  */
 class SpaceCredential
@@ -17,7 +17,7 @@ class SpaceCredential
         public readonly SpaceRef $space,
         public readonly string $userDid,
         public readonly SpaceToken $token,
-        public readonly DpopKeypair $keypair,
+        public readonly CredentialKey $key,
     ) {
     }
 
@@ -27,14 +27,6 @@ class SpaceCredential
     public function jwt(): string
     {
         return $this->token->jwt;
-    }
-
-    /**
-     * A proof factory for the bound key.
-     */
-    public function proof(): DpopProof
-    {
-        return new DpopProof($this->keypair);
     }
 
     public function expiresAt(): int
@@ -59,20 +51,18 @@ class SpaceCredential
      */
     public function isCorrectlyBound(): bool
     {
-        return $this->token->isBoundTo($this->keypair->thumbprint());
+        return $this->token->isBoundTo($this->key->didKey());
     }
 
     /**
-     * The headers that authenticate a request to a repo host.
+     * The headers that present this credential to one audience: the repo
+     * owner's DID for a repo read, the space authority's DID for its host.
      *
      * @return array<string, string>
      */
-    public function headers(string $method, string $url, ?string $nonce = null): array
+    public function headers(string $audience): array
     {
-        return [
-            'Authorization' => 'DPoP '.$this->jwt(),
-            'DPoP' => $this->proof()->create($method, $url, $nonce, $this->jwt()),
-        ];
+        return RequestSignature::headers($this->key, $this->jwt(), $audience);
     }
 
     /**
@@ -86,7 +76,7 @@ class SpaceCredential
             'space' => (string) $this->space,
             'userDid' => $this->userDid,
             'credential' => $this->jwt(),
-            'keypair' => $this->keypair->toPem(),
+            'key' => $this->key->toPem(),
         ];
     }
 
@@ -99,7 +89,9 @@ class SpaceCredential
     {
         $space = SpaceRef::tryParse((string) ($data['space'] ?? ''));
 
-        if ($space === null || ! is_string($data['credential'] ?? null) || ! is_string($data['keypair'] ?? null)) {
+        // A credential cached before keys were did:keys has no "key", and is
+        // dropped so a fresh one is minted.
+        if ($space === null || ! is_string($data['credential'] ?? null) || ! is_string($data['key'] ?? null)) {
             return null;
         }
 
@@ -108,7 +100,7 @@ class SpaceCredential
                 $space,
                 (string) ($data['userDid'] ?? ''),
                 SpaceToken::parse(SpaceTokenType::Credential, $data['credential']),
-                DpopKeypair::fromPem($data['keypair']),
+                CredentialKey::fromPem($data['key']),
             );
         } catch (\Throwable) {
             return null;

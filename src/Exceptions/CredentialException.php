@@ -3,7 +3,8 @@
 namespace SocialDept\AtpSpaces\Exceptions;
 
 /**
- * A space authority refused to issue a credential, or issued an unusable one.
+ * A space authority refused to issue a credential, issued an unusable one,
+ * or revoked one.
  */
 class CredentialException extends SpacesException
 {
@@ -45,13 +46,22 @@ class CredentialException extends SpacesException
     }
 
     /**
+     * Whether the authority revoked the credential. It is never retried: a
+     * replacement has to be minted through a session that may still enter.
+     */
+    public function isRevoked(): bool
+    {
+        return $this->error === 'CredentialRevoked';
+    }
+
+    /**
      * Whether re-minting could plausibly succeed.
      *
-     * An authorization refusal will not change on its own; a stale delegation
-     * token might.
+     * An authorization refusal will not change on its own. A stale or spent
+     * delegation token might, since minting again fetches a fresh one.
      */
     public function isRetryable(): bool
     {
-        return in_array($this->error, ['InvalidDelegationToken', 'UseDpopNonce'], true);
+        return $this->error === 'InvalidDelegationToken';
     }
 }

@@ -2,9 +2,9 @@
 
 namespace SocialDept\AtpSpaces\Tests\Feature;
 
+use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\Group;
-use SocialDept\AtpSpaces\Auth\DpopKeypair;
-use SocialDept\AtpSpaces\Auth\DpopProof;
+use SocialDept\AtpSpaces\Auth\CredentialKey;
 use SocialDept\AtpSpaces\Auth\SpaceCredential;
 use SocialDept\AtpSpaces\Auth\SpaceToken;
 use SocialDept\AtpSpaces\Auth\SpaceTokenType;
@@ -17,7 +17,6 @@ use SocialDept\AtpSpaces\Repo\RepoCommit;
 use SocialDept\AtpSpaces\Repo\RepoOp;
 use SocialDept\AtpSpaces\SpaceRef;
 use SocialDept\AtpSpaces\Spaces;
-use SocialDept\AtpSpaces\Tests\Support\DpopHttp;
 use SocialDept\AtpSpaces\Tests\Support\OAuthActor;
 use SocialDept\AtpSpaces\Tests\TestCase;
 use SocialDept\AtpSupport\Resolver;
@@ -305,27 +304,21 @@ class SpaceLifecycleTest extends TestCase
     /**
      * Exchange an actor's delegation token for a credential at the authority.
      *
-     * @return array{0: int, 1: array<string, mixed>|null, 2: DpopKeypair}
+     * @return array{0: int, 1: array<string, mixed>|null, 2: CredentialKey}
      */
     protected function exchange(OAuthActor $actor, ?SpaceRef $space = null): array
     {
         $space ??= $this->space;
         $delegation = $actor->delegationToken($space);
+        $key = CredentialKey::generate();
 
-        $keypair = DpopKeypair::generate();
-        $nonce = null;
+        $response = Http::timeout(30)->acceptJson()->post($actor->host.'/xrpc/com.atproto.space.getSpaceCredential', [
+            'space' => (string) $space,
+            'credentialKid' => $key->didKey(),
+            'delegationToken' => $delegation->jwt,
+        ]);
 
-        [$status, $body] = DpopHttp::request(
-            'POST',
-            $actor->host.'/xrpc/com.atproto.space.getSpaceCredential',
-            ['space' => (string) $space],
-            'Bearer',
-            $delegation->jwt,
-            new DpopProof($keypair),
-            $nonce,
-        );
-
-        return [$status, $body, $keypair];
+        return [$response->status(), $response->json(), $key];
     }
 
     /**
@@ -333,7 +326,7 @@ class SpaceLifecycleTest extends TestCase
      */
     protected function readerFor(OAuthActor $actor): SpaceReader
     {
-        [$status, $body, $keypair] = $this->exchange($actor);
+        [$status, $body, $key] = $this->exchange($actor);
 
         $this->assertSame(200, $status, 'getSpaceCredential: '.json_encode($body));
 
@@ -341,7 +334,7 @@ class SpaceLifecycleTest extends TestCase
             $this->space,
             $actor->did,
             SpaceToken::parse(SpaceTokenType::Credential, (string) $body['credential']),
-            $keypair,
+            $key,
         );
 
         $this->assertTrue($credential->isCorrectlyBound());

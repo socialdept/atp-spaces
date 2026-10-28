@@ -4,6 +4,7 @@ namespace SocialDept\AtpSpaces\Tests\Feature;
 
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\Group;
+use SocialDept\AtpSpaces\Auth\CredentialKey;
 use SocialDept\AtpSpaces\Authority\AuthorityResolver;
 use SocialDept\AtpSpaces\Enums\SimpleSpaceNsid;
 use SocialDept\AtpSpaces\Enums\SpaceNsid;
@@ -36,6 +37,7 @@ class AlphaPdsTest extends TestCase
             SpaceNsid::GetDelegationToken,
             SpaceNsid::ListRepos,
             SimpleSpaceNsid::GetSpace,
+            SimpleSpaceNsid::ListMembers,
         ] as $method) {
             $response = Http::timeout(30)->acceptJson()->get(self::HOST.'/xrpc/'.$method->value);
 
@@ -49,18 +51,35 @@ class AlphaPdsTest extends TestCase
     }
 
     /**
-     * The authority side of the exchange is live, and asks for exactly the
-     * token the broker sends.
+     * The authority takes the credential request in the body, not in an
+     * Authorization header.
      */
-    public function test_the_authority_expects_a_delegation_token(): void
+    public function test_the_authority_takes_the_request_in_the_body(): void
     {
         $response = Http::timeout(30)
             ->acceptJson()
-            ->post(self::HOST.'/xrpc/'.SpaceNsid::GetSpaceCredential->value, []);
+            ->withBody('{}', 'application/json')
+            ->post(self::HOST.'/xrpc/'.SpaceNsid::GetSpaceCredential->value);
 
-        $this->assertSame(401, $response->status());
-        $this->assertSame('MissingJwt', $response->json()['error'] ?? null);
-        $this->assertSame('missing delegation token', $response->json()['message'] ?? null);
+        $this->assertSame(400, $response->status());
+        $this->assertSame('InvalidRequest', $response->json()['error'] ?? null);
+        $this->assertStringContainsString('Missing required key "space"', (string) ($response->json()['message'] ?? ''));
+    }
+
+    /**
+     * Without a delegation token, a space that is not public reads as not
+     * found, so a stranger cannot learn it exists.
+     */
+    public function test_a_space_that_is_not_public_is_not_found_without_a_token(): void
+    {
+        $response = Http::timeout(30)
+            ->acceptJson()
+            ->post(self::HOST.'/xrpc/'.SpaceNsid::GetSpaceCredential->value, [
+                'space' => (string) SpaceRef::make(self::ACCOUNT, 'com.example.forum', 'nope'),
+                'credentialKid' => CredentialKey::generate()->didKey(),
+            ]);
+
+        $this->assertSame('SpaceNotFound', $response->json()['error'] ?? null);
     }
 
     /**
@@ -89,7 +108,6 @@ class AlphaPdsTest extends TestCase
         $this->assertSame(self::HOST, $authority->endpoint);
         $this->assertSame('#atproto', $authority->signingKeyId);
         $this->assertStringStartsWith('did:key:', (string) $authority->signingKey);
-        $this->assertTrue($authority->isPdsHosted());
-        $this->assertSame(self::ACCOUNT.'#atproto_space_host', $authority->audience());
+        $this->assertSame(self::ACCOUNT.'#atproto_pds', $authority->audience());
     }
 }

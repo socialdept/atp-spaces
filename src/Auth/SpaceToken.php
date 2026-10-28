@@ -59,6 +59,12 @@ class SpaceToken
             throw new SpaceTokenException('Token is missing "alg".');
         }
 
+        $kid = $type->defaultKid();
+
+        if ($kid !== null && ($header['kid'] ?? null) !== $kid) {
+            throw new SpaceTokenException("A {$type->value} token must name \"{$kid}\" as its kid.");
+        }
+
         foreach (['iss', 'sub'] as $claim) {
             if (! is_string($payload[$claim] ?? null) || $payload[$claim] === '') {
                 throw new SpaceTokenException("Token is missing \"{$claim}\".");
@@ -73,11 +79,13 @@ class SpaceToken
             throw new SpaceTokenException('Token is missing "aud".');
         }
 
-        if ($type->requiresConfirmation() && ! is_string($payload['cnf']['jkt'] ?? null)) {
-            throw new SpaceTokenException('Token is missing "cnf.jkt".');
+        if ($type->requiresConfirmation() && ! is_string($payload['cnf']['kid'] ?? null)) {
+            throw new SpaceTokenException('Token is missing "cnf.kid".');
         }
 
-        if ($type->isSingleUse() && (! is_string($payload['jti'] ?? null) || $payload['jti'] === '')) {
+        // Every class carries a jti: delegations and attestations to be spent
+        // once, credentials so an authority can revoke them.
+        if (! is_string($payload['jti'] ?? null) || $payload['jti'] === '') {
             throw new SpaceTokenException("A {$type->value} token requires a \"jti\".");
         }
 
@@ -89,15 +97,12 @@ class SpaceToken
     }
 
     /**
-     * The service identifier a space's authority answers to as its host.
-     *
-     * This is the audience a delegation token names — not necessarily where
-     * requests are sent. An authority publishing no such entry is still
-     * reached at its `#atproto_pds` endpoint.
+     * The service identifier a space's authority answers to as its host, and
+     * the audience a delegation token or client attestation names.
      */
     public static function hostAudience(string $spaceDid): string
     {
-        return $spaceDid.'#atproto_space_host';
+        return $spaceDid.'#atproto_pds';
     }
 
     public function issuer(): string
@@ -119,11 +124,19 @@ class SpaceToken
     }
 
     /**
-     * The DPoP key thumbprint this token is bound to, if any.
+     * The did:key this token is bound to (`cnf.kid`), if any.
      */
-    public function confirmationThumbprint(): ?string
+    public function confirmationKey(): ?string
     {
-        return is_string($this->payload['cnf']['jkt'] ?? null) ? $this->payload['cnf']['jkt'] : null;
+        return is_string($this->payload['cnf']['kid'] ?? null) ? $this->payload['cnf']['kid'] : null;
+    }
+
+    /**
+     * The token's id, which an authority names to revoke a credential.
+     */
+    public function id(): string
+    {
+        return (string) $this->payload['jti'];
     }
 
     public function expiresAt(): int
@@ -161,13 +174,13 @@ class SpaceToken
     }
 
     /**
-     * Whether this token is bound to the given DPoP key thumbprint.
+     * Whether this token is bound to the given did:key.
      */
-    public function isBoundTo(string $thumbprint): bool
+    public function isBoundTo(string $didKey): bool
     {
-        $bound = $this->confirmationThumbprint();
+        $bound = $this->confirmationKey();
 
-        return $bound !== null && hash_equals($bound, $thumbprint);
+        return $bound !== null && hash_equals($bound, $didKey);
     }
 
     /**

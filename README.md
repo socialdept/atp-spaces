@@ -35,7 +35,7 @@ Think of it as a private corner of the Atmosphere that its owner decides who may
 ## Why use Spaces?
 
 - **Familiar addressing** - `SpaceRef` and `SpaceRecordUri` parse and build space URIs as immutable value objects
-- **Credentials handled for you** - The two-hop delegation-token exchange, DPoP binding, caching and renewal
+- **Credentials handled for you** - The two-hop delegation-token exchange, key binding, request signing, caching and renewal
 - **Reads across the space** - One credential reads every member's repo, wherever each one is hosted
 - **Space management** - Create spaces, admit members, and choose how the perimeter is enforced
 - **App-gated access** - Answer `checkUserAccess` yourself, so entitlements stay in your own database
@@ -344,9 +344,16 @@ $client->space->forget($space);    // discard, forcing a fresh mint
 Credentials are cached for their lifetime, keyed by space and user. Configure under
 `atp-spaces.credentials`, or set `SPACES_CREDENTIAL_CACHE=false` to mint one per use.
 
-A credential reads the **whole space** and is presented to every repo host in it. As a bearer
-token that would be a shared secret, since a host given one could replay it against its peers.
-So it is bound to a DPoP key and presented under the `DPoP` scheme, never `Bearer`.
+A credential lasts about ten minutes. It reads the **whole space** and is presented to every repo
+host in it. As a bearer token that would be a shared secret, since a host given one could replay
+it against its peers. So each credential is bound to a fresh P-256 key only your app holds, and
+every request carries an HTTP Message Signature over the credential and the DID it is for: the
+repo owner for a repo read, the authority for its host. A host cannot replay a request at another
+member's host.
+
+An authority can revoke a credential early. A reader then throws a `CredentialException` whose
+`isRevoked()` is true and drops the stored credential, so the next `read()` mints a replacement if
+the user may still enter.
 
 Refusals say which perimeter failed:
 
@@ -359,6 +366,7 @@ try {
     $e->isUserRefusal();   // UserNotAuthorized
     $e->isAppRefusal();    // AppNotAuthorized
     $e->isSpaceDeleted();  // SpaceDeleted
+    $e->isRetryable();     // InvalidDelegationToken: a fresh mint may succeed
 }
 ```
 

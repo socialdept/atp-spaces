@@ -8,8 +8,9 @@ use SocialDept\AtpSpaces\SpaceRef;
 /**
  * Where minted space credentials are kept between requests.
  *
- * A credential lives two hours and costs a delegation-token round trip plus an
- * authority call to obtain, so reusing one matters. It is also a capability:
+ * A credential lives about ten minutes, an hour at most, and costs a
+ * delegation-token round trip plus an authority call to obtain, so reusing
+ * one matters. It is also a capability:
  * anything holding it can read the whole space, so a store should be treated
  * like a session store, not like a cache of public data.
  */
