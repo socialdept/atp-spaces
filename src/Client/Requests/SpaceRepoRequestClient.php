@@ -11,7 +11,7 @@ use SocialDept\AtpSpaces\SpaceRef;
 use SocialDept\AtpSpaces\Support\Actor;
 
 /**
- * Writes into the authenticated user's own permissioned repos.
+ * Writes into the authenticated user's own space repos.
  *
  * Every method here is served by the user's **own PDS** under their OAuth
  * session — you can only ever write to your own repo, in a space you are a
@@ -73,7 +73,7 @@ class SpaceRepoRequestClient extends Request
     }
 
     /**
-     * Create a record in one of the user's permissioned repos.
+     * Create a record in one of the user's space repos.
      *
      * @param  array<string, mixed>  $record  Must carry a `$type`
      * @return array{uri: SpaceRecordUri|null, cid: string, validationStatus: string|null}

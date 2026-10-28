@@ -12,7 +12,7 @@ use SocialDept\AtpSpaces\Crypto\Blake3;
  * Each element expands to 1024 little-endian uint16 lanes, summed into the
  * state mod 2^16. Addition and subtraction commute, so the state depends only
  * on which elements are present, never on the order they arrived — which is
- * what lets a permissioned repo be synced by replaying operations in any order
+ * what lets a space repo be synced by replaying operations in any order
  * and still arrive at a comparable hash.
  */
 class LtHash

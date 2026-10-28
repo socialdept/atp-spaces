@@ -3,7 +3,7 @@
 namespace SocialDept\AtpSpaces\Repo;
 
 /**
- * One entry from a permissioned repo's operation log.
+ * One entry from a space repo's operation log.
  *
  * The shape encodes the operation: a create carries `cid` only, a delete
  * `prev` only, an update both. That is what lets a set hash apply an oplog

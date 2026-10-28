@@ -10,7 +10,7 @@ use SocialDept\AtpSpaces\Contracts\Blake3Hasher;
  * extendable output.
  *
  * PHP has no BLAKE3 in core and no widely-adopted extension, and spaces need
- * it for the set hash that backs every permissioned repo. Rather than take a
+ * it for the set hash that backs every space repo. Rather than take a
  * dependency on a thinly-used package for one function, it lives here.
  *
  * This is a direct port of the reference implementation, chosen for

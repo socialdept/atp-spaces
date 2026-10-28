@@ -17,6 +17,7 @@ use SocialDept\AtpSpaces\Repo\Commit;
 use SocialDept\AtpSpaces\Repo\Mac;
 use SocialDept\AtpSpaces\Repo\RepoCommit;
 use SocialDept\AtpSpaces\Repo\RepoOp;
+use SocialDept\AtpSpaces\Repo\Star;
 use SocialDept\AtpSpaces\SpaceRef;
 use SocialDept\AtpSpaces\Support\Actor;
 use SocialDept\AtpSpaces\Support\Cid;
@@ -239,16 +240,67 @@ class SpaceReader
     }
 
     /**
-     * A member's whole repo as a CAR, for full-state recovery.
+     * A member's whole repo, for full-state recovery: its commit and every
+     * record, checked.
+     *
+     * The host sends a STAR archive. The commit in its metadata must check
+     * out against the MAC, and the records, folded into a set hash, must
+     * reproduce the commit's digest, or nothing is returned. Records come in
+     * path order, each with its CID and its value in JSON form. When
+     * replacing a local copy, drop what is not here.
+     *
+     * @return array{commit: Commit, records: list<array{collection: string, rkey: string, cid: string, value: array<string, mixed>}>}
+     *
+     * @throws RepoVerificationException when the archive does not check out
      */
-    public function getRepo(string $repo): string
+    public function getRepo(string $repo): array
     {
         $repo = Actor::did($repo);
 
-        return $this->send('GET', $this->repoUrl($repo, SpaceNsid::GetRepo), $repo, [
+        return $this->withMac($repo, SpaceNsid::GetRepo, Mac::COMMIT, [
             'space' => (string) $this->space(),
             'repo' => $repo,
-        ])->body();
+        ], function (Response $response, string $secret) use ($repo) {
+            ['meta' => $meta, 'pairs' => $pairs] = Star::read($response->body());
+
+            if ($meta->{'$type'} !== Star::REPO_TYPE) {
+                throw new RepoVerificationException("The archive is a {$meta->{'$type'}}, not a space repo.");
+            }
+
+            $commit = $this->verified(self::decodeCommit((array) Drisl::toJsonValue($meta)), $repo, $secret, $response);
+            $state = new RepoCommit();
+            $records = [];
+            $previous = null;
+
+            foreach ($pairs as [$path, $bytes]) {
+                if ($previous !== null && strcmp($path, $previous) <= 0) {
+                    throw new RepoVerificationException("The archive's records are out of order at {$path}.");
+                }
+
+                $previous = $path;
+                [$collection, $rkey] = array_pad(explode('/', $path, 2), 2, '');
+
+                try {
+                    $value = Drisl::decode($bytes);
+                } catch (\InvalidArgumentException $e) {
+                    throw new RepoVerificationException("The record at {$path} is not DRISL: ".$e->getMessage(), 0, $e);
+                }
+
+                if ($rkey === '' || ! $value instanceof \stdClass) {
+                    throw new RepoVerificationException("The archive holds a malformed record at {$path}.");
+                }
+
+                $cid = (string) Cid::forBytes($bytes);
+                $state->add($collection, $rkey, $cid);
+                $records[] = ['collection' => $collection, 'rkey' => $rkey, 'cid' => $cid, 'value' => Drisl::toJsonValue($value)];
+            }
+
+            if (! $state->matches($commit)) {
+                throw new RepoVerificationException("The records in {$repo}'s archive do not match its commit.");
+            }
+
+            return ['commit' => $commit, 'records' => $records];
+        });
     }
 
     /**
