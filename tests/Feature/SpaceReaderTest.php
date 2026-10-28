@@ -3,14 +3,15 @@
 namespace SocialDept\AtpSpaces\Tests\Feature;
 
 use Illuminate\Http\Client\Factory as HttpFactory;
-use SocialDept\AtpSpaces\Auth\DpopKeypair;
-use SocialDept\AtpSpaces\Auth\Jwk;
+use SocialDept\AtpSpaces\Auth\CredentialBroker;
+use SocialDept\AtpSpaces\Auth\CredentialKey;
 use SocialDept\AtpSpaces\Auth\SpaceCredential;
 use SocialDept\AtpSpaces\Auth\SpaceToken;
 use SocialDept\AtpSpaces\Auth\SpaceTokenType;
 use SocialDept\AtpSpaces\Authority\AuthorityResolver;
 use SocialDept\AtpSpaces\Authority\SpaceAuthority;
 use SocialDept\AtpSpaces\Client\SpaceReader;
+use SocialDept\AtpSpaces\Exceptions\CredentialException;
 use SocialDept\AtpSpaces\Exceptions\SpacesException;
 use SocialDept\AtpSpaces\Repo\RepoCommit;
 use SocialDept\AtpSpaces\SpaceRef;
@@ -32,60 +33,100 @@ class SpaceReaderTest extends TestCase
         return SpaceRef::make(self::AUTHORITY, 'com.example.forum', 'main');
     }
 
-    protected function reader(HttpFactory $http): SpaceReader
+    protected function credential(): SpaceCredential
     {
-        $keypair = DpopKeypair::generate();
+        $key = CredentialKey::generate();
 
-        $credential = new SpaceCredential(
+        return new SpaceCredential(
             $this->space(),
             'did:plc:user',
             SpaceToken::parse(
                 SpaceTokenType::Credential,
-                $this->mintCredential(self::AUTHORITY, (string) $this->space(), $keypair),
+                $this->mintCredential(self::AUTHORITY, (string) $this->space(), $key),
             ),
-            $keypair,
+            $key,
         );
+    }
 
+    protected function reader(HttpFactory $http, ?CredentialBroker $broker = null): SpaceReader
+    {
         $authorities = $this->createStub(AuthorityResolver::class);
         $authorities->method('forSpace')->willReturn(new SpaceAuthority(
             did: self::AUTHORITY,
             endpoint: self::AUTHORITY_HOST,
-            signingKeyId: '#atproto',
         ));
 
         $resolver = $this->createStub(Resolver::class);
         $resolver->method('resolvePds')->willReturn(self::MEMBER_PDS);
 
-        return new SpaceReader($credential, $authorities, $resolver, $http);
+        return new SpaceReader($this->credential(), $authorities, $resolver, $http, broker: $broker);
     }
 
     /**
-     * A credential is presented under the DPoP scheme, not as a bearer token,
-     * and every request carries a fresh proof naming that exact URL.
+     * A repo read is signed for the repo's owner, so the host serving it
+     * cannot replay the request at another member's host.
      */
-    public function test_requests_present_the_credential_under_the_dpop_scheme(): void
+    public function test_a_repo_read_is_signed_for_the_repo_owner(): void
     {
         $seen = [];
         $http = new HttpFactory();
         $http->fake(function ($request) use ($http, &$seen) {
-            $seen['authorization'] = $request->header('Authorization')[0] ?? '';
-            $seen['dpop'] = $request->header('DPoP')[0] ?? '';
-            $seen['url'] = $request->url();
+            $seen = array_map(fn ($values) => $values[0], $request->headers());
 
             return $http->response(['uri' => 'at://x', 'value' => []]);
         });
 
         $this->reader($http)->getRecord(self::MEMBER, 'com.example.thread', '3abc');
 
-        $this->assertStringStartsWith('DPoP ', $seen['authorization']);
+        $this->assertStringStartsWith('Atproto-Space-Credential ', $seen['Authorization']);
+        $this->assertSame(self::MEMBER, $seen['Atproto-Space-Audience']);
+        $this->assertStringStartsWith('atproto-space-credential=', $seen['Signature']);
+        $this->assertArrayNotHasKey('DPoP', $seen);
+    }
 
-        $payload = json_decode(Jwk::base64UrlDecode(explode('.', $seen['dpop'])[1]), true);
-        $this->assertSame('GET', $payload['htm']);
-        $this->assertSame(self::MEMBER_PDS.'/xrpc/com.atproto.space.getRecord', $payload['htu']);
+    /**
+     * A call to the space host is signed for the authority's bare DID.
+     */
+    public function test_a_space_host_call_is_signed_for_the_authority(): void
+    {
+        $seen = [];
+        $http = new HttpFactory();
+        $http->fake(function ($request) use ($http, &$seen) {
+            $seen = array_map(fn ($values) => $values[0], $request->headers());
 
-        // The proof binds the exact credential being presented.
-        $credential = substr($seen['authorization'], strlen('DPoP '));
-        $this->assertSame(Jwk::base64UrlEncode(hash('sha256', $credential, true)), $payload['ath']);
+            return $http->response(['repos' => []]);
+        });
+
+        $this->reader($http)->listRepos();
+
+        $this->assertSame(self::AUTHORITY, $seen['Atproto-Space-Audience']);
+    }
+
+    /**
+     * A revoked credential is never retried. It is dropped, so the next
+     * reader mints a replacement if the user may still enter.
+     */
+    public function test_a_revoked_credential_is_forgotten_and_not_retried(): void
+    {
+        $calls = 0;
+        $http = new HttpFactory();
+        $http->fake(function () use ($http, &$calls) {
+            $calls++;
+
+            return $http->response(['error' => 'CredentialRevoked', 'message' => 'revoked'], 401);
+        });
+
+        $broker = $this->createMock(CredentialBroker::class);
+        $broker->expects($this->once())->method('forget')->with($this->callback(fn ($space) => (string) $space === (string) $this->space()), 'did:plc:user');
+
+        try {
+            $this->reader($http, $broker)->listRecords(self::MEMBER);
+            $this->fail('Expected a CredentialException.');
+        } catch (CredentialException $e) {
+            $this->assertTrue($e->isRevoked());
+        }
+
+        $this->assertSame(1, $calls);
     }
 
     /**
@@ -194,33 +235,6 @@ class SpaceReaderTest extends TestCase
         $this->reader($http)->getRecord(self::MEMBER, 'com.example.thread', '3abc');
     }
 
-    public function test_it_retries_once_when_the_host_demands_a_nonce(): void
-    {
-        $calls = 0;
-        $http = new HttpFactory();
-        $http->fake(function ($request) use (&$calls, $http) {
-            $calls++;
-
-            if ($calls === 1) {
-                return $http->response(
-                    ['error' => 'UseDpopNonce'],
-                    401,
-                    ['DPoP-Nonce' => 'host-nonce', 'Content-Type' => 'application/json'],
-                );
-            }
-
-            $proof = $request->header('DPoP')[0];
-            $payload = json_decode(Jwk::base64UrlDecode(explode('.', $proof)[1]), true);
-            $this->assertSame('host-nonce', $payload['nonce']);
-
-            return $http->response(['records' => []]);
-        });
-
-        $this->reader($http)->listRecords(self::MEMBER);
-
-        $this->assertSame(2, $calls);
-    }
-
     public function test_it_fails_when_a_member_publishes_no_pds(): void
     {
         $http = new HttpFactory();
@@ -231,21 +245,10 @@ class SpaceReaderTest extends TestCase
 
         $authorities = $this->createStub(AuthorityResolver::class);
 
-        $keypair = DpopKeypair::generate();
-        $credential = new SpaceCredential(
-            $this->space(),
-            'did:plc:user',
-            SpaceToken::parse(
-                SpaceTokenType::Credential,
-                $this->mintCredential(self::AUTHORITY, (string) $this->space(), $keypair),
-            ),
-            $keypair,
-        );
-
         $this->expectException(SpacesException::class);
         $this->expectExceptionMessage('No PDS endpoint published');
 
-        (new SpaceReader($credential, $authorities, $resolver, $http))
+        (new SpaceReader($this->credential(), $authorities, $resolver, $http))
             ->getRecord(self::MEMBER, 'com.example.thread', '3abc');
     }
 }

@@ -4,9 +4,11 @@ namespace SocialDept\AtpSpaces\Client;
 
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\Response;
+use SocialDept\AtpSpaces\Auth\CredentialBroker;
 use SocialDept\AtpSpaces\Auth\SpaceCredential;
 use SocialDept\AtpSpaces\Authority\AuthorityResolver;
 use SocialDept\AtpSpaces\Enums\SpaceNsid;
+use SocialDept\AtpSpaces\Exceptions\CredentialException;
 use SocialDept\AtpSpaces\Exceptions\SpacesException;
 use SocialDept\AtpSpaces\Repo\RepoOp;
 use SocialDept\AtpSpaces\Repo\SignedCommit;
@@ -20,11 +22,12 @@ use Throwable;
  *
  * Every `$repo` argument takes a DID or a handle.
  *
- * There is no relay for permissioned data, so reading a space means visiting
- * each member's own PDS in turn — `listRepos` on the authority says who is in
- * it, and everything else is addressed to one member's host. A single
- * credential works at all of them, which is exactly why it is bound to a key
- * rather than passed as a bearer token.
+ * There is no relay for space data, so reading a space means visiting each
+ * member's own PDS in turn. `listRepos` on the authority says who is in it,
+ * and everything else is addressed to one member's host. A single credential
+ * works at all of them, which is exactly why it is bound to a key rather than
+ * passed as a bearer token: each request signs it together with the DID it is
+ * for, the repo owner or the authority, so no host can replay it elsewhere.
  */
 class SpaceReader
 {
@@ -34,6 +37,7 @@ class SpaceReader
         protected Resolver $resolver,
         protected HttpFactory $http,
         protected int $timeout = 30,
+        protected ?CredentialBroker $broker = null,
     ) {
     }
 
@@ -61,7 +65,7 @@ class SpaceReader
     {
         $url = $this->authorities->forSpace($this->space())->xrpc(SpaceNsid::ListRepos->value);
 
-        $json = $this->get($url, array_filter([
+        $json = $this->get($url, $this->space()->authority, array_filter([
             'space' => (string) $this->space(),
             'limit' => $limit,
             'cursor' => $cursor,
@@ -82,7 +86,7 @@ class SpaceReader
     {
         $repo = Actor::did($repo);
 
-        return $this->get($this->repoUrl($repo, SpaceNsid::GetRecord), [
+        return $this->get($this->repoUrl($repo, SpaceNsid::GetRecord), $repo, [
             'space' => (string) $this->space(),
             'repo' => $repo,
             'collection' => $collection,
@@ -105,7 +109,7 @@ class SpaceReader
     ): array {
         $repo = Actor::did($repo);
 
-        $json = $this->get($this->repoUrl($repo, SpaceNsid::ListRecords), array_filter([
+        $json = $this->get($this->repoUrl($repo, SpaceNsid::ListRecords), $repo, array_filter([
             'space' => (string) $this->space(),
             'repo' => $repo,
             'collection' => $collection,
@@ -140,7 +144,7 @@ class SpaceReader
     ): array {
         $repo = Actor::did($repo);
 
-        $json = $this->get($this->repoUrl($repo, SpaceNsid::ListRepoOps), array_filter([
+        $json = $this->get($this->repoUrl($repo, SpaceNsid::ListRepoOps), $repo, array_filter([
             'space' => (string) $this->space(),
             'repo' => $repo,
             'since' => $since,
@@ -173,7 +177,7 @@ class SpaceReader
     {
         $repo = Actor::did($repo);
 
-        $json = $this->get($this->repoUrl($repo, SpaceNsid::GetLatestCommit), [
+        $json = $this->get($this->repoUrl($repo, SpaceNsid::GetLatestCommit), $repo, [
             'space' => (string) $this->space(),
             'repo' => $repo,
         ]);
@@ -190,7 +194,7 @@ class SpaceReader
     {
         $repo = Actor::did($repo);
 
-        return $this->send('GET', $this->repoUrl($repo, SpaceNsid::GetRepo), [
+        return $this->send('GET', $this->repoUrl($repo, SpaceNsid::GetRepo), $repo, [
             'space' => (string) $this->space(),
             'repo' => $repo,
         ])->body();
@@ -203,7 +207,7 @@ class SpaceReader
     {
         $repo = Actor::did($repo);
 
-        return $this->send('GET', $this->repoUrl($repo, SpaceNsid::GetBlob), [
+        return $this->send('GET', $this->repoUrl($repo, SpaceNsid::GetBlob), $repo, [
             'space' => (string) $this->space(),
             'repo' => $repo,
             'cid' => $cid,
@@ -219,7 +223,7 @@ class SpaceReader
     {
         $repo = Actor::did($repo);
 
-        $json = $this->get($this->repoUrl($repo, SpaceNsid::ListBlobs), array_filter([
+        $json = $this->get($this->repoUrl($repo, SpaceNsid::ListBlobs), $repo, array_filter([
             'space' => (string) $this->space(),
             'repo' => $repo,
             'limit' => $limit,
@@ -285,31 +289,38 @@ class SpaceReader
     /**
      * A GET returning decoded JSON.
      *
+     * @param  string  $audience  The DID the request is for
      * @param  array<string, mixed>  $params
      * @return array<string, mixed>
      */
-    protected function get(string $url, array $params): array
+    protected function get(string $url, string $audience, array $params): array
     {
-        $json = $this->send('GET', $url, $params)->json();
+        $json = $this->send('GET', $url, $audience, $params)->json();
 
         return is_array($json) ? $json : [];
     }
 
     /**
-     * Send a credentialed request, retrying once if the host demands a nonce.
+     * Send a credentialed request.
      *
+     * A revoked credential is never retried. The stored one is dropped, so
+     * the next reader mints a replacement through the user's session, if the
+     * user may still enter.
+     *
+     * @param  string  $audience  The DID the request is for
      * @param  array<string, mixed>  $params
+     *
+     * @throws CredentialException when the credential was revoked
+     * @throws SpacesException
      */
-    protected function send(string $method, string $url, array $params): Response
+    protected function send(string $method, string $url, string $audience, array $params): Response
     {
-        $response = $this->dispatch($method, $url, $params);
+        $response = $this->dispatch($method, $url, $audience, $params);
 
-        if ($this->errorOf($response) === 'UseDpopNonce') {
-            $nonce = $response->header('DPoP-Nonce');
+        if ($this->errorOf($response) === 'CredentialRevoked') {
+            $this->broker?->forget($this->space(), $this->credential->userDid);
 
-            if ($nonce !== '') {
-                $response = $this->dispatch($method, $url, $params, $nonce);
-            }
+            throw new CredentialException("The credential for {$this->space()} was revoked.", 'CredentialRevoked');
         }
 
         if ($response->failed() || $this->errorOf($response) !== null) {
@@ -327,11 +338,11 @@ class SpaceReader
     /**
      * @param  array<string, mixed>  $params
      */
-    protected function dispatch(string $method, string $url, array $params, ?string $nonce = null): Response
+    protected function dispatch(string $method, string $url, string $audience, array $params): Response
     {
         $request = $this->http
             ->timeout($this->timeout)
-            ->withHeaders($this->credential->headers($method, $url, $nonce));
+            ->withHeaders($this->credential->headers($audience));
 
         return $method === 'GET'
             ? $request->get($url, $params)

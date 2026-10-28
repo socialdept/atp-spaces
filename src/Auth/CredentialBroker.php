@@ -21,7 +21,8 @@ use Throwable;
  * Two hops, because the two halves answer different questions. The user's PDS
  * attests *that this app acts for this user* (a 60-second, single-use
  * delegation token). The space authority decides *whether that user may enter*
- * and issues a credential bound to a key only this app holds. Neither party
+ * and issues a credential, good for about ten minutes, bound to a key only
+ * this app holds. Neither party
  * can do the other's job, which is what keeps a space's membership out of the
  * user's PDS and the user's identity out of the authority's trust store.
  */
@@ -87,14 +88,14 @@ class CredentialBroker
             );
         }
 
-        $keypair = DpopKeypair::generate();
-        $jwt = $this->exchange($space, $authority, $delegation, $keypair, $clientAttestation);
+        $key = CredentialKey::generate();
+        $jwt = $this->exchange($space, $authority, $delegation, $key, $clientAttestation);
 
         $credential = new SpaceCredential(
             $space,
             $userDid,
             SpaceToken::parse(SpaceTokenType::Credential, $jwt),
-            $keypair,
+            $key,
         );
 
         if (! $credential->isCorrectlyBound()) {
@@ -142,32 +143,23 @@ class CredentialBroker
     /**
      * Exchange a delegation token for a credential at the authority.
      *
-     * The delegation token is a bearer credential here; the DPoP proof is what
-     * tells the authority which key to bind the result to.
+     * Everything goes in the body: the space, the did:key to bind the
+     * credential to, the delegation token, and the client attestation when the
+     * space asks for one. The request itself carries no authorization.
      */
     protected function exchange(
         SpaceRef $space,
         SpaceAuthority $authority,
         SpaceToken $delegation,
-        DpopKeypair $keypair,
+        CredentialKey $key,
         ?string $clientAttestation,
     ): string {
-        $url = $authority->xrpc(SpaceNsid::GetSpaceCredential->value);
-        $proof = new DpopProof($keypair);
-
-        $body = array_filter([
+        $response = $this->post($authority->xrpc(SpaceNsid::GetSpaceCredential->value), array_filter([
             'space' => (string) $space,
+            'credentialKid' => $key->didKey(),
+            'delegationToken' => $delegation->jwt,
             'clientAttestation' => $clientAttestation,
-        ], fn ($value) => $value !== null);
-
-        $response = $this->post($url, $body, $delegation->jwt, $proof->create('POST', $url));
-
-        // The authority may demand a nonce it only reveals by rejecting once.
-        $nonce = $this->nonceFrom($response);
-
-        if ($nonce !== null && $this->errorOf($response) === 'UseDpopNonce') {
-            $response = $this->post($url, $body, $delegation->jwt, $proof->create('POST', $url, $nonce));
-        }
+        ], fn ($value) => $value !== null));
 
         if ($response->failed() || $this->errorOf($response) !== null) {
             throw new CredentialException(
@@ -188,23 +180,12 @@ class CredentialBroker
     /**
      * @param  array<string, mixed>  $body
      */
-    protected function post(string $url, array $body, string $delegationToken, string $proof): Response
+    protected function post(string $url, array $body): Response
     {
         return $this->http
             ->timeout($this->timeout)
-            ->withHeaders([
-                'Authorization' => 'Bearer '.$delegationToken,
-                'DPoP' => $proof,
-            ])
             ->acceptJson()
             ->post($url, $body);
-    }
-
-    protected function nonceFrom(Response $response): ?string
-    {
-        $nonce = $response->header('DPoP-Nonce');
-
-        return $nonce !== '' ? $nonce : null;
     }
 
     protected function errorOf(Response $response): ?string

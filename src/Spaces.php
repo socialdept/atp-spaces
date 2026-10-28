@@ -63,6 +63,7 @@ class Spaces
             $this->resolver,
             $this->http,
             $this->timeout,
+            $this->broker,
         );
     }
 

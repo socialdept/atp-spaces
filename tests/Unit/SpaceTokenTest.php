@@ -3,7 +3,7 @@
 namespace SocialDept\AtpSpaces\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
-use SocialDept\AtpSpaces\Auth\DpopKeypair;
+use SocialDept\AtpSpaces\Auth\CredentialKey;
 use SocialDept\AtpSpaces\Auth\Jwk;
 use SocialDept\AtpSpaces\Auth\SpaceToken;
 use SocialDept\AtpSpaces\Auth\SpaceTokenType;
@@ -21,7 +21,7 @@ class SpaceTokenTest extends TestCase
     public function test_the_host_audience_is_a_fragment_not_a_url(): void
     {
         $this->assertSame(
-            'did:plc:authority#atproto_space_host',
+            'did:plc:authority#atproto_pds',
             SpaceToken::hostAudience(self::AUTHORITY),
         );
     }
@@ -33,31 +33,32 @@ class SpaceTokenTest extends TestCase
 
         $this->assertSame(self::USER, $token->issuer());
         $this->assertSame(self::SPACE, $token->subject());
-        $this->assertSame('did:plc:authority#atproto_space_host', $token->audience());
+        $this->assertSame('did:plc:authority#atproto_pds', $token->audience());
         $this->assertSame('#atproto', $token->header['kid']);
         $this->assertSame(self::SPACE, (string) $token->space());
     }
 
     public function test_it_parses_a_credential_bound_to_a_key(): void
     {
-        $keypair = DpopKeypair::generate();
-        $jwt = $this->mintCredential(self::AUTHORITY, self::SPACE, $keypair);
+        $key = CredentialKey::generate();
+        $jwt = $this->mintCredential(self::AUTHORITY, self::SPACE, $key);
         $token = SpaceToken::parse(SpaceTokenType::Credential, $jwt);
 
-        $this->assertSame($keypair->thumbprint(), $token->confirmationThumbprint());
-        $this->assertTrue($token->isBoundTo($keypair->thumbprint()));
-        $this->assertFalse($token->isBoundTo(DpopKeypair::generate()->thumbprint()));
+        $this->assertSame($key->didKey(), $token->confirmationKey());
+        $this->assertTrue($token->isBoundTo($key->didKey()));
+        $this->assertFalse($token->isBoundTo(CredentialKey::generate()->didKey()));
+        $this->assertNotSame('', $token->id(), 'A jti, which an authority names to revoke it.');
     }
 
     /**
      * A credential carries no audience: it is multi-use across every repo host
-     * in the space, and bound to a DPoP key instead.
+     * in the space, bound to a key, with the audience signed per request.
      */
     public function test_a_credential_needs_no_audience(): void
     {
         $token = SpaceToken::parse(
             SpaceTokenType::Credential,
-            $this->mintCredential(self::AUTHORITY, self::SPACE, DpopKeypair::generate()),
+            $this->mintCredential(self::AUTHORITY, self::SPACE, CredentialKey::generate()),
         );
 
         $this->assertNull($token->audience());
@@ -78,7 +79,33 @@ class SpaceTokenTest extends TestCase
         $jwt = $this->mintToken(SpaceTokenType::Credential, self::AUTHORITY, self::SPACE);
 
         $this->expectException(SpaceTokenException::class);
-        $this->expectExceptionMessage('missing "cnf.jkt"');
+        $this->expectExceptionMessage('missing "cnf.kid"');
+
+        SpaceToken::parse(SpaceTokenType::Credential, $jwt);
+    }
+
+    /**
+     * Verifiers refuse any kid but exactly `#atproto`, so a token naming
+     * another is unusable and better refused at once.
+     *
+     * @return array<string, array{string|null}>
+     */
+    public static function badKidProvider(): array
+    {
+        return [
+            'none' => [''],
+            'without the hash' => ['atproto'],
+            'the old space key' => ['#atproto_space'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('badKidProvider')]
+    public function test_a_credential_must_name_the_atproto_key(string $kid): void
+    {
+        $jwt = $this->mintToken(SpaceTokenType::Credential, self::AUTHORITY, self::SPACE, boundKey: CredentialKey::generate()->didKey(), kid: $kid);
+
+        $this->expectException(SpaceTokenException::class);
+        $this->expectExceptionMessage('must name "#atproto"');
 
         SpaceToken::parse(SpaceTokenType::Credential, $jwt);
     }
@@ -152,7 +179,7 @@ class SpaceTokenTest extends TestCase
     {
         return [
             'delegation' => [SpaceTokenType::Delegation, 'atproto-space-delegation+jwt', 60, true, false, true],
-            'credential' => [SpaceTokenType::Credential, 'atproto-space-credential+jwt', 7200, false, true, false],
+            'credential' => [SpaceTokenType::Credential, 'atproto-space-credential+jwt', 600, false, true, false],
             'attestation' => [SpaceTokenType::ClientAttestation, 'atproto-client-attestation+jwt', 60, true, false, true],
         ];
     }

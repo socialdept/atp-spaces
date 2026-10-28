@@ -2,7 +2,8 @@
 
 namespace SocialDept\AtpSpaces\Tests\Feature;
 
-use SocialDept\AtpSpaces\Auth\DpopKeypair;
+use SocialDept\AtpSpaces\Auth\CredentialKey;
+use SocialDept\AtpSpaces\Auth\RequestSignature;
 use SocialDept\AtpSpaces\Auth\SpaceCredential;
 use SocialDept\AtpSpaces\Auth\SpaceToken;
 use SocialDept\AtpSpaces\Auth\SpaceTokenType;
@@ -25,21 +26,15 @@ class CredentialStoreTest extends TestCase
         return SpaceRef::make(self::AUTHORITY, 'com.example.forum', 'main');
     }
 
-    protected function credential(?int $expiresIn = null, ?DpopKeypair $keypair = null): SpaceCredential
+    protected function credential(?int $expiresIn = null, ?CredentialKey $key = null): SpaceCredential
     {
-        $keypair ??= DpopKeypair::generate();
+        $key ??= CredentialKey::generate();
 
         return new SpaceCredential(
             $this->space(),
             self::USER,
-            SpaceToken::parse(SpaceTokenType::Credential, $this->mintToken(
-                SpaceTokenType::Credential,
-                self::AUTHORITY,
-                (string) $this->space(),
-                dpopJkt: $keypair->thumbprint(),
-                expiresIn: $expiresIn,
-            )),
-            $keypair,
+            SpaceToken::parse(SpaceTokenType::Credential, $this->mintCredential(self::AUTHORITY, (string) $this->space(), $key, $expiresIn)),
+            $key,
         );
     }
 
@@ -61,7 +56,7 @@ class CredentialStoreTest extends TestCase
 
         $this->assertNotNull($restored);
         $this->assertSame($original->jwt(), $restored->jwt());
-        $this->assertSame($original->keypair->thumbprint(), $restored->keypair->thumbprint());
+        $this->assertSame($original->key->didKey(), $restored->key->didKey());
         $this->assertTrue($restored->isCorrectlyBound());
     }
 
@@ -151,15 +146,50 @@ class CredentialStoreTest extends TestCase
     }
 
     /**
-     * The headers a repo host expects: the credential under the DPoP scheme,
-     * plus a proof for that exact request.
+     * A credential cached in the DPoP era has no did:key binding, and must be
+     * dropped so a fresh one is minted rather than presented and refused.
+     */
+    public function test_a_credential_cached_in_the_old_format_is_dropped(): void
+    {
+        $this->assertNull(SpaceCredential::fromArray([
+            'space' => (string) $this->space(),
+            'userDid' => self::USER,
+            'credential' => $this->credential()->jwt(),
+            'keypair' => CredentialKey::generate()->toPem(),
+        ]));
+    }
+
+    /**
+     * The headers a repo host expects: the credential under its own scheme,
+     * the audience, and a signature over both.
      */
     public function test_it_builds_request_headers(): void
     {
         $credential = $this->credential();
-        $headers = $credential->headers('GET', 'https://pds.example/xrpc/com.atproto.space.getRecord');
+        $headers = $credential->headers('did:plc:member');
 
-        $this->assertSame('DPoP '.$credential->jwt(), $headers['Authorization']);
-        $this->assertNotEmpty($headers['DPoP']);
+        $this->assertSame('Atproto-Space-Credential '.$credential->jwt(), $headers['Authorization']);
+        $this->assertSame('did:plc:member', $headers['Atproto-Space-Audience']);
+        $this->assertSame('atproto-space-credential=("authorization" "atproto-space-audience");tag="atproto-space-credential"', $headers['Signature-Input']);
+        $this->assertMatchesRegularExpression('/^atproto-space-credential=:[A-Za-z0-9+\/]+={0,2}:$/', $headers['Signature']);
+    }
+
+    /**
+     * The exact bytes a repo host rebuilds and checks against cnf.kid.
+     */
+    public function test_the_signature_covers_the_credential_and_audience(): void
+    {
+        $credential = $this->credential();
+        $headers = $credential->headers('did:plc:member');
+
+        $base = "\"authorization\": Atproto-Space-Credential {$credential->jwt()}\n"
+            ."\"atproto-space-audience\": did:plc:member\n"
+            .'"@signature-params": ("authorization" "atproto-space-audience");tag="atproto-space-credential"';
+        $signature = base64_decode(substr($headers['Signature'], strlen('atproto-space-credential=:'), -1), true);
+
+        $this->assertSame(64, strlen($signature), 'Raw r || s, not DER.');
+        $this->assertTrue((new \SocialDept\AtpSupport\Crypto\SignatureVerifier())->verify($credential->token->confirmationKey(), $base, $signature, allowMalleable: true));
+        $this->assertFalse((new \SocialDept\AtpSupport\Crypto\SignatureVerifier())->verify($credential->token->confirmationKey(), str_replace('did:plc:member', 'did:plc:other', $base), $signature, allowMalleable: true), 'A request for another audience does not verify.');
+        $this->assertSame($base, RequestSignature::base('Atproto-Space-Credential '.$credential->jwt(), 'did:plc:member', '("authorization" "atproto-space-audience");tag="atproto-space-credential"'));
     }
 }

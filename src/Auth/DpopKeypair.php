@@ -8,13 +8,11 @@ use phpseclib3\Crypt\EC\PrivateKey;
 use phpseclib3\Crypt\PublicKeyLoader;
 
 /**
- * The ephemeral P-256 keypair a space credential is bound to.
+ * A P-256 keypair for OAuth DPoP with a user's PDS, as the dev OAuth script
+ * and the live tests use.
  *
- * A credential reads a whole space and is presented to every repo host in it.
- * As a bearer token it would be a shared secret — a host given one to serve
- * its own repo could replay it against every other host in the space. Binding
- * it to a key the application holds is what prevents that, so this key must
- * outlive nothing but the credential and never leave the app.
+ * Space credentials no longer use DPoP. They are bound to a
+ * {@see CredentialKey} and presented with an HTTP Message Signature.
  */
 class DpopKeypair
 {

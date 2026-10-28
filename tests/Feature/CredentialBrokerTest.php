@@ -5,8 +5,7 @@ namespace SocialDept\AtpSpaces\Tests\Feature;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use PHPUnit\Framework\Attributes\DataProvider;
 use SocialDept\AtpSpaces\Auth\CredentialBroker;
-use SocialDept\AtpSpaces\Auth\DpopKeypair;
-use SocialDept\AtpSpaces\Auth\Jwk;
+use SocialDept\AtpSpaces\Auth\CredentialKey;
 use SocialDept\AtpSpaces\Auth\SpaceToken;
 use SocialDept\AtpSpaces\Auth\SpaceTokenType;
 use SocialDept\AtpSpaces\Authority\AuthorityResolver;
@@ -40,7 +39,6 @@ class CredentialBrokerTest extends TestCase
         $authorities->method('forSpace')->willReturn(new SpaceAuthority(
             did: self::AUTHORITY,
             endpoint: self::HOST,
-            signingKeyId: '#atproto',
         ));
 
         return new TestableBroker(
@@ -65,26 +63,38 @@ class CredentialBrokerTest extends TestCase
     }
 
     /**
-     * The delegation token goes as a bearer credential; the DPoP proof is what
-     * tells the authority which key to bind the result to.
+     * Everything goes in the body, and the request itself carries no
+     * authorization: the delegation token, and the did:key the authority is
+     * to bind the credential to.
      */
-    public function test_it_sends_the_delegation_token_and_a_proof(): void
+    public function test_it_asks_for_a_credential_in_the_body(): void
     {
         $seen = [];
-        $http = $this->fakeAuthority(headers: $seen);
+        $http = $this->fakeAuthority(seen: $seen);
 
-        $this->broker($http)->mint($this->space(), $this->stubClient(), self::USER);
+        $credential = $this->broker($http)->mint($this->space(), $this->stubClient(), self::USER, 'the-attestation');
 
-        $this->assertStringStartsWith('Bearer ', $seen['authorization']);
-        $this->assertNotEmpty($seen['dpop']);
+        $this->assertSame('', $seen['authorization']);
+        $this->assertSame((string) $this->space(), $seen['body']['space']);
+        $this->assertSame($credential->key->didKey(), $seen['body']['credentialKid']);
+        $this->assertStringStartsWith('did:key:zDn', $seen['body']['credentialKid'], 'A P-256 did:key.');
+        $this->assertSame(SpaceTokenType::Delegation->typ(), SpaceToken::parse(SpaceTokenType::Delegation, $seen['body']['delegationToken'])->header['typ']);
+        $this->assertSame('the-attestation', $seen['body']['clientAttestation']);
+    }
 
-        $proofHeader = json_decode(Jwk::base64UrlDecode(explode('.', $seen['dpop'])[0]), true);
-        $this->assertSame('dpop+jwt', $proofHeader['typ']);
+    public function test_each_credential_gets_a_fresh_key(): void
+    {
+        $broker = $this->broker($this->fakeAuthority());
+
+        $this->assertNotSame(
+            $broker->mint($this->space(), $this->stubClient(), self::USER)->key->didKey(),
+            $broker->mint($this->space(), $this->stubClient(), self::USER)->key->didKey(),
+        );
     }
 
     public function test_it_rejects_a_credential_bound_to_another_key(): void
     {
-        $http = $this->fakeAuthority(bindTo: DpopKeypair::generate());
+        $http = $this->fakeAuthority(bindTo: CredentialKey::generate());
 
         $this->expectException(CredentialException::class);
         $this->expectExceptionMessage('bound to a different key');
@@ -129,6 +139,7 @@ class CredentialBrokerTest extends TestCase
             'user refused' => ['UserNotAuthorized', 'isUserRefusal'],
             'app refused' => ['AppNotAuthorized', 'isAppRefusal'],
             'space gone' => ['SpaceDeleted', 'isSpaceDeleted'],
+            'bad delegation token' => ['InvalidDelegationToken', 'isRetryable'],
         ];
     }
 
@@ -137,7 +148,7 @@ class CredentialBrokerTest extends TestCase
     {
         $http = new HttpFactory();
         $http->fake([
-            '*' => $http->response(['error' => $error, 'message' => 'nope'], 401),
+            '*' => $http->response(['error' => $error, 'message' => 'nope'], 400),
         ]);
 
         try {
@@ -148,47 +159,6 @@ class CredentialBrokerTest extends TestCase
             $this->assertTrue($e->{$predicate}());
             $this->assertStringContainsString('nope', $e->getMessage());
         }
-    }
-
-    /**
-     * An authority may only reveal the nonce it wants by rejecting once.
-     */
-    public function test_it_retries_once_with_a_nonce(): void
-    {
-        $calls = 0;
-
-        $http = new HttpFactory();
-        $http->fake(function ($request) use (&$calls, $http) {
-            $calls++;
-
-            if ($calls === 1) {
-                return $http->response(
-                    ['error' => 'UseDpopNonce', 'message' => 'nonce required'],
-                    400,
-                    ['DPoP-Nonce' => 'server-nonce'],
-                );
-            }
-
-            // The retry must carry the nonce the authority just handed back,
-            // signed by the same key as the first attempt.
-            $proof = $request->header('DPoP')[0];
-            $payload = json_decode(Jwk::base64UrlDecode(explode('.', $proof)[1]), true);
-            $this->assertSame('server-nonce', $payload['nonce']);
-
-            return $http->response([
-                'credential' => $this->mintToken(
-                    SpaceTokenType::Credential,
-                    self::AUTHORITY,
-                    (string) $this->space(),
-                    dpopJkt: $this->thumbprintOfProof($proof),
-                ),
-            ]);
-        });
-
-        $credential = $this->broker($http)->mint($this->space(), $this->stubClient(), self::USER);
-
-        $this->assertSame(2, $calls);
-        $this->assertTrue($credential->isCorrectlyBound());
     }
 
     public function test_it_fails_when_the_authority_returns_no_credential(): void
@@ -203,42 +173,33 @@ class CredentialBrokerTest extends TestCase
     }
 
     /**
-     * Fake the authority, echoing back a credential bound to whichever key the
-     * request's DPoP proof carried.
+     * Fake the authority, echoing back a credential bound to whichever key
+     * the request named.
      *
-     * @param  array<string, string>  $headers
+     * @param  array<string, mixed>  $seen
      */
     protected function fakeAuthority(
-        array &$headers = [],
-        ?DpopKeypair $bindTo = null,
+        array &$seen = [],
+        ?CredentialKey $bindTo = null,
         ?string $issuer = null,
     ): HttpFactory {
         $http = new HttpFactory();
 
-        $http->fake(function ($request) use ($http, &$headers, $bindTo, $issuer) {
-            $headers['authorization'] = $request->header('Authorization')[0] ?? '';
-            $headers['dpop'] = $request->header('DPoP')[0] ?? '';
-
-            $jkt = $bindTo?->thumbprint() ?? $this->thumbprintOfProof($headers['dpop']);
+        $http->fake(function ($request) use ($http, &$seen, $bindTo, $issuer) {
+            $seen['authorization'] = $request->header('Authorization')[0] ?? '';
+            $seen['body'] = $request->data();
 
             return $http->response([
                 'credential' => $this->mintToken(
                     SpaceTokenType::Credential,
                     $issuer ?? self::AUTHORITY,
                     (string) $this->space(),
-                    dpopJkt: $jkt,
+                    boundKey: $bindTo?->didKey() ?? $seen['body']['credentialKid'],
                 ),
             ]);
         });
 
         return $http;
-    }
-
-    protected function thumbprintOfProof(string $proof): string
-    {
-        $header = json_decode(Jwk::base64UrlDecode(explode('.', $proof)[0]), true);
-
-        return Jwk::thumbprint($header['jwk']);
     }
 
     /**
@@ -252,8 +213,7 @@ class CredentialBrokerTest extends TestCase
 }
 
 /**
- * A broker with the PDS hop replaced, and an optional fixed DPoP key so a test
- * can predict the binding.
+ * A broker with the PDS hop replaced.
  */
 class TestableBroker extends CredentialBroker
 {

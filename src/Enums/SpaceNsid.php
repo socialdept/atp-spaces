@@ -6,8 +6,8 @@ namespace SocialDept\AtpSpaces\Enums;
  * The `com.atproto.space.*` XRPC methods.
  *
  * Grouped here by who serves them, because that determines how a request is
- * authenticated — the PDS methods take the user's OAuth session, the repo and
- * host methods take a space credential with a DPoP proof.
+ * authenticated: the PDS methods take the user's OAuth session, the repo and
+ * host methods take a space credential, signed with its key.
  */
 enum SpaceNsid: string
 {

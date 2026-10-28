@@ -5,7 +5,9 @@ namespace SocialDept\AtpSpaces\Auth;
 use Firebase\JWT\JWT;
 
 /**
- * Builds the DPoP proofs that accompany a space credential (RFC 9449).
+ * Builds DPoP proofs (RFC 9449) for OAuth requests to a user's PDS, as the
+ * dev OAuth script and the live tests use. Space credentials no longer use
+ * DPoP: see {@see RequestSignature}.
  *
  * A proof is signed per request and names the exact method and URL it is for,
  * so intercepting one buys nothing beyond replaying that one call within its

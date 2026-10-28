@@ -4,7 +4,7 @@ namespace SocialDept\AtpSpaces\Tests;
 
 use Firebase\JWT\JWT;
 use phpseclib3\Crypt\EC;
-use SocialDept\AtpSpaces\Auth\DpopKeypair;
+use SocialDept\AtpSpaces\Auth\CredentialKey;
 use SocialDept\AtpSpaces\Auth\SpaceToken;
 use SocialDept\AtpSpaces\Auth\SpaceTokenType;
 
@@ -19,7 +19,7 @@ trait MintsTokens
         string $issuer,
         string $subject,
         ?string $audience = null,
-        ?string $dpopJkt = null,
+        ?string $boundKey = null,
         ?int $expiresIn = null,
         ?string $kid = null,
     ): string {
@@ -37,8 +37,8 @@ trait MintsTokens
             $payload['aud'] = $audience;
         }
 
-        if ($dpopJkt !== null) {
-            $payload['cnf'] = ['jkt' => $dpopJkt];
+        if ($boundKey !== null) {
+            $payload['cnf'] = ['kid' => $boundKey];
         }
 
         $header = ['typ' => $type->typ(), 'alg' => 'ES256'];
@@ -72,13 +72,14 @@ trait MintsTokens
     /**
      * A credential as an authority would issue it, bound to a key.
      */
-    protected function mintCredential(string $authorityDid, string $space, DpopKeypair $keypair): string
+    protected function mintCredential(string $authorityDid, string $space, CredentialKey $key, ?int $expiresIn = null): string
     {
         return $this->mintToken(
             SpaceTokenType::Credential,
             $authorityDid,
             $space,
-            dpopJkt: $keypair->thumbprint(),
+            boundKey: $key->didKey(),
+            expiresIn: $expiresIn,
         );
     }
 }
