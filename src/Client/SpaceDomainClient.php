@@ -21,7 +21,7 @@ use SocialDept\AtpSpaces\Spaces;
 class SpaceDomainClient
 {
     /**
-     * Writes to the authenticated user's own permissioned repos.
+     * Writes to the authenticated user's own space repos.
      */
     public SpaceRepoRequestClient $repo;
 

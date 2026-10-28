@@ -105,6 +105,22 @@ final class Drisl
     }
 
     /**
+     * Turn decoded DRISL values into the JSON form records are read in
+     * elsewhere: maps as arrays, links as `{"$link": …}`, byte strings as
+     * `{"$bytes": …}`.
+     */
+    public static function toJsonValue(mixed $value): mixed
+    {
+        return match (true) {
+            $value instanceof Cid => ['$link' => (string) $value],
+            $value instanceof Bytes => ['$bytes' => rtrim(base64_encode($value->value), '=')],
+            $value instanceof stdClass => array_map(self::toJsonValue(...), get_object_vars($value)),
+            is_array($value) => array_map(self::toJsonValue(...), $value),
+            default => $value,
+        };
+    }
+
+    /**
      * @param  array<array-key, mixed>  $map
      */
     protected static function encodeMap(array $map): string

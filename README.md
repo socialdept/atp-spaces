@@ -16,13 +16,13 @@
 
 > [!WARNING]
 > **Don't use this in production.** Spaces are an alpha AT Protocol extension. The lexicons this
-> package is built against are still moving, and so is this package. Only alpha PDS software
-> serves these endpoints today. Pin a version, expect breaking changes, and treat anything you
+> package is built against are still moving, and so is this package. It tracks the October 22,
+> 2026 alpha release. Only alpha PDS software serves these endpoints today. Pin a version, expect breaking changes, and treat anything you
 > store as throwaway.
 
 ## What is Spaces?
 
-**Spaces** is a Laravel package for AT Protocol **permissioned data**, meaning records only
+**Spaces** is a Laravel package for **atproto spaces**, AT Protocol's permissioned data: records only
 certain people and applications can read. Private drafts, subscriber-only publications, group
 discussions, anything you don't want on the public firehose.
 
@@ -175,18 +175,26 @@ $client->space->repo->listSpaces();   // spaces you have written to
 ```
 
 **Reads go to each member's own host, under a space credential.** There is no relay for
-permissioned data, so reading a space means visiting its members in turn. Anywhere a member is
+space data, so reading a space means visiting its members in turn. Anywhere a member is
 named, a DID or a handle both work. A DID costs nothing, a handle is resolved for you.
 
 ```php
 $reader = $client->space->read($space);
 
-$reader->listRepos();
-$reader->getRecord($did, 'com.example.thread', '3abc');
+$reader->listRepos();                                   // who writes, by spaceRev
+$reader->getRecord($did, 'com.example.thread', '3abc'); // checked against its MAC and CID
 $reader->listRecords($did, 'com.example.thread');
 $reader->getBlob($did, $cid);
-$reader->getRepo($did);        // raw CAR bytes
+$reader->getRepo($did);    // ['commit' => …, 'records' => [...]], checked whole
 ```
+
+`listRepos()` returns each writer's latest state, `{ did, repoRev, data, spaceRev }`, in
+`spaceRev` order. Its cursor is the last `spaceRev` read, so keep it as a checkpoint: pass it back
+to read on, and an empty page, with no cursor, means you are caught up.
+
+`getRepo()` reads a member's whole repo from a STAR archive. It returns only once the commit's MAC
+checks out and the records, folded into a set hash, reproduce the commit's digest. Records come in
+path order with their CID and value. When replacing a local copy, drop what is not there.
 
 ### Incremental sync
 
@@ -197,8 +205,8 @@ $result = $reader->listRepoOps($memberDid, since: $cursor);
 
 $repo = RepoCommit::fromState($savedState)->applyOps($result['ops']);
 
-// The commit arrives only once you reach the head of the log — which is
-// exactly when comparing hashes means something.
+// The commit arrives only once you reach the head of the log, which is
+// exactly when comparing digests means something. It is already verified.
 if ($result['commit'] && $repo->matches($result['commit'])) {
     // in sync
 }
@@ -512,7 +520,7 @@ See the gotcha above. Point it at throwaway accounts.
 ## Resources
 
 - [Atproto Spaces (alpha)](https://atproto.com/blog/atproto-spaces-alpha)
-- [Permissioned Data Proposal](https://github.com/bluesky-social/proposals/tree/main/0016-permissioned-data)
+- [Atproto Spaces Proposal](https://github.com/bluesky-social/proposals/tree/main/0016-permissioned-data)
 - [AT Protocol Documentation](https://atproto.com/)
 - [OAuth Scopes Proposal](https://github.com/bluesky-social/proposals/tree/main/0011-auth-scopes)
 

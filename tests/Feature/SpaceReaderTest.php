@@ -382,6 +382,83 @@ class SpaceReaderTest extends TestCase
         $this->reader($http)->getRecord(self::MEMBER, 'com.example.thread', '3abc');
     }
 
+    /**
+     * @param  array<int, array{0: string, 1: array<string, mixed>}>  $records  Path and value
+     * @return array{0: string, 1: Commit}
+     */
+    protected function starFor(array $records, ?string $data = null): array
+    {
+        $state = new RepoCommit();
+        $pairs = [];
+
+        foreach ($records as [$path, $value]) {
+            $bytes = Drisl::encode($value);
+            [$collection, $rkey] = explode('/', $path, 2);
+            $state->add($collection, $rkey, (string) Cid::forBytes($bytes));
+            $pairs[] = [$path, $bytes];
+        }
+
+        $commit = new Commit(1, self::MEMBER, (string) $this->space(), '3lkq2xhbc2s2j', $data ?? $state->digest());
+        $meta = ['$type' => 'atproto-space-repo', 'ver' => 1, 'repo' => $commit->repo, 'space' => $commit->space, 'rev' => $commit->rev, 'data' => new \SocialDept\AtpSpaces\Support\Drisl\Bytes($commit->data)];
+
+        return [\SocialDept\AtpSpaces\Tests\Unit\StarTest::archive($meta, $pairs), $commit];
+    }
+
+    public function test_a_whole_repo_is_read_from_its_archive_and_checked(): void
+    {
+        [$archive, $commit] = $this->starFor([
+            ['com.example.thread/1', ['$type' => 'com.example.thread', 'text' => 'one']],
+            ['com.example.thread/2', ['$type' => 'com.example.thread', 'text' => 'two', 'ref' => ['$link' => (string) Cid::forBytes('x')]]],
+        ]);
+
+        $http = new HttpFactory();
+        $http->fake(fn ($request) => $http->response($archive, 200, [
+            'Content-Type' => 'application/octet-stream',
+            Mac::HEADER => $this->macFor($request, Mac::COMMIT, fn ($secret) => Mac::forCommit($secret, $commit)),
+        ]));
+
+        $repo = $this->reader($http)->getRepo(self::MEMBER);
+
+        $this->assertSame($commit->data, $repo['commit']->data);
+        $this->assertSame(['1', '2'], array_column($repo['records'], 'rkey'));
+        $this->assertSame('two', $repo['records'][1]['value']['text']);
+        $this->assertSame(['$link' => (string) Cid::forBytes('x')], $repo['records'][1]['value']['ref'], 'Values come back in JSON form.');
+    }
+
+    /**
+     * An archive whose records do not reproduce the commit's digest is
+     * refused whole, even with a valid MAC over the commit.
+     */
+    public function test_an_archive_that_does_not_match_its_commit_is_refused(): void
+    {
+        [$archive, $commit] = $this->starFor([['com.example.thread/1', ['text' => 'one']]], data: str_repeat("\x09", 32));
+
+        $http = new HttpFactory();
+        $http->fake(fn ($request) => $http->response($archive, 200, [
+            Mac::HEADER => $this->macFor($request, Mac::COMMIT, fn ($secret) => Mac::forCommit($secret, $commit)),
+        ]));
+
+        $this->expectException(RepoVerificationException::class);
+        $this->expectExceptionMessage('do not match its commit');
+
+        $this->reader($http)->getRepo(self::MEMBER);
+    }
+
+    public function test_an_archive_with_records_out_of_order_is_refused(): void
+    {
+        [$archive, $commit] = $this->starFor([['com.example.thread/2', ['text' => 'two']], ['com.example.thread/1', ['text' => 'one']]]);
+
+        $http = new HttpFactory();
+        $http->fake(fn ($request) => $http->response($archive, 200, [
+            Mac::HEADER => $this->macFor($request, Mac::COMMIT, fn ($secret) => Mac::forCommit($secret, $commit)),
+        ]));
+
+        $this->expectException(RepoVerificationException::class);
+        $this->expectExceptionMessage('out of order');
+
+        $this->reader($http)->getRepo(self::MEMBER);
+    }
+
     public function test_it_returns_raw_bytes_for_a_blob(): void
     {
         $http = new HttpFactory();
