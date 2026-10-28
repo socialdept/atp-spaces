@@ -5,64 +5,34 @@ namespace SocialDept\AtpSpaces\Repo;
 use SocialDept\AtpSpaces\Exceptions\RepoVerificationException;
 
 /**
- * The outcome of checking a signed commit.
+ * The outcome of checking a commit against the MAC its repo host sent.
  *
- * Authenticity and integrity are separate results because they can be
- * established separately: without a {@see \SocialDept\AtpSpaces\Contracts\SignatureVerifier}
- * the MAC still proves the hash belongs to this context, it just does not
- * prove who produced it. `signatureChecked` says which situation you are in,
- * so a caller never mistakes "not checked" for "valid".
+ * A commit is trusted only when it is for the repo and space that were
+ * asked about and its MAC checks out with the secret of that request. Only
+ * then does its `data` mean anything.
  */
 class CommitVerification
 {
     public function __construct(
         public readonly bool $versionSupported,
-        public readonly bool $revisionMatches,
+        public readonly bool $repoMatches,
+        public readonly bool $spaceMatches,
         public readonly bool $macValid,
-        public readonly bool $signatureChecked,
-        public readonly bool $signatureValid,
     ) {
     }
 
-    /**
-     * Whether every check that ran passed, including the signature.
-     *
-     * An unchecked signature is not a pass.
-     */
-    public function isFullyVerified(): bool
+    public function isVerified(): bool
     {
-        return $this->isIntact() && $this->signatureChecked && $this->signatureValid;
+        return $this->versionSupported && $this->repoMatches && $this->spaceMatches && $this->macValid;
     }
 
     /**
-     * Whether the hash is bound to this context, regardless of authorship.
-     */
-    public function isIntact(): bool
-    {
-        return $this->versionSupported && $this->revisionMatches && $this->macValid;
-    }
-
-    /**
-     * Throw unless every check passed, including the signature.
-     *
      * @throws RepoVerificationException
      */
-    public function assertFullyVerified(): void
+    public function assertVerified(): void
     {
-        if (! $this->isFullyVerified()) {
+        if (! $this->isVerified()) {
             throw new RepoVerificationException('Commit verification failed: '.$this->failureReason().'.');
-        }
-    }
-
-    /**
-     * Throw unless the hash is bound to its context, ignoring authorship.
-     *
-     * @throws RepoVerificationException
-     */
-    public function assertIntact(): void
-    {
-        if (! $this->isIntact()) {
-            throw new RepoVerificationException('Commit integrity check failed: '.$this->failureReason().'.');
         }
     }
 
@@ -73,10 +43,9 @@ class CommitVerification
     {
         return match (true) {
             ! $this->versionSupported => 'unsupported commit version',
-            ! $this->revisionMatches => 'commit revision does not match the context',
-            ! $this->macValid => 'commit mac does not bind the hash to the context',
-            ! $this->signatureChecked => 'commit signature was not checked',
-            ! $this->signatureValid => 'commit signature is invalid',
+            ! $this->repoMatches => 'commit is for another repo',
+            ! $this->spaceMatches => 'commit is for another space',
+            ! $this->macValid => 'commit mac does not match',
             default => null,
         };
     }

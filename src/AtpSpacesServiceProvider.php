@@ -15,10 +15,8 @@ use SocialDept\AtpSpaces\Client\SpaceDomainClient;
 use SocialDept\AtpSpaces\Console\LexiconDriftCommand;
 use SocialDept\AtpSpaces\Contracts\Blake3Hasher;
 use SocialDept\AtpSpaces\Contracts\CredentialStore;
-use SocialDept\AtpSpaces\Contracts\SignatureVerifier;
 use SocialDept\AtpSpaces\Contracts\SpaceAccessResolver;
 use SocialDept\AtpSpaces\Crypto\Blake3;
-use SocialDept\AtpSpaces\Crypto\SupportSignatureVerifier;
 use SocialDept\AtpSpaces\Enums\SimpleSpaceNsid;
 use SocialDept\AtpSpaces\Http\Controllers\CheckUserAccessController;
 use SocialDept\AtpSpaces\Lexicons\LexiconManifest;
@@ -35,10 +33,6 @@ class AtpSpacesServiceProvider extends ServiceProvider
 
         // Swappable so an application with a compiled BLAKE3 can bind it.
         $this->app->singleton(Blake3Hasher::class, fn () => new Blake3());
-
-        // Commit authenticity is checkable out of the box now; swap this out
-        // to verify against something other than a published did:key.
-        $this->app->singleton(SignatureVerifier::class, fn () => new SupportSignatureVerifier());
 
         // Refuses everyone unless the application binds its own.
         $this->app->singleton(SpaceAccessResolver::class, function ($app) {
@@ -163,7 +157,6 @@ class AtpSpacesServiceProvider extends ServiceProvider
     {
         return [
             Blake3Hasher::class,
-            SignatureVerifier::class,
             SpaceAccessResolver::class,
             LexiconManifest::class,
             SpaceTypeRegistry::class,

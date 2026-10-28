@@ -39,7 +39,7 @@ Think of it as a private corner of the Atmosphere that its owner decides who may
 - **Reads across the space** - One credential reads every member's repo, wherever each one is hosted
 - **Space management** - Create spaces, admit members, and choose how the perimeter is enforced
 - **App-gated access** - Answer `checkUserAccess` yourself, so entitlements stay in your own database
-- **Verifiable state** - Repo commits check out against a set hash computed locally, signature and all
+- **Verifiable state** - Commits and records checked against a MAC from each member's host, and commits against a set hash computed locally
 - **Pinned lexicons** - Upstream definitions vendored verbatim, with a command that detects drift
 - **No app-specific opinions** - Ships no space types of its own, so you register yours
 - **DIDs or handles** - Anywhere an actor is named, either works, matching the rest of the `atp-*` packages
@@ -375,9 +375,8 @@ both predicates are false.
 
 ## Verifying Repo State
 
-Permissioned repos have no Merkle search tree. State is the *set* of records a repo contains,
-folded into a homomorphic set hash, so operations replay in any order and still produce a
-comparable digest.
+Space repos have no Merkle search tree. State is the *set* of records a repo contains, folded into
+a homomorphic set hash, so operations replay in any order and still produce a comparable digest.
 
 ```php
 use SocialDept\AtpSpaces\Repo\RepoCommit;
@@ -390,25 +389,29 @@ $repo = RepoCommit::fromIndex([
 
 $repo->applyOp(new RepoOp('com.example.thread', '1', cid: 'bafyC', prev: 'bafyA'));
 
-$repo->matches($signedCommit);   // does our state match the host's claim?
+$repo->matches($reader->getLatestCommit('did:plc:bob'));   // does our state match the host's?
 ```
 
-A space commit's signature covers only its **context**, meaning the space, author, revision, and
-per-commit keying material. It never covers the repo hash. A leaked commit therefore proves
-nothing about what its author wrote. The hash is bound to that context by a symmetric MAC
-instead, so readers get integrity while third parties get nothing.
+A commit carries no signature. Each member publishes a `#atproto_kem` key in their DID document,
+and for every read the reader generates a fresh key, derives a secret only it and the member's
+host share, and asks for a MAC. The host returns the commit or record with a MAC keyed by that
+secret, so a leaked response proves nothing to anyone else.
+
+The reader does all of this itself. `getLatestCommit()`, the commit at the head of
+`listRepoOps()`, and `getRecord()` return only what checked out, and throw a
+`RepoVerificationException` otherwise. A record is also checked against its CID. A failed check is
+retried once after rereading the member's DID document, in case their KEM key rotated. A member
+whose host has not yet published a KEM key cannot be read with a credential until it does.
+
+To check a commit by hand:
 
 ```php
-$result = RepoCommit::verify($commit, $context, $verifier, $didKey);
+$result = RepoCommit::verify($commit, $space, $repo, $sharedSecret, $mac);
 
-$result->isIntact();          // the hash belongs to this context
-$result->isFullyVerified();   // ...and the author signed it
-$result->failureReason();     // null, or a short explanation
-$result->assertFullyVerified();
+$result->isVerified();      // the right repo and space, and the MAC matches
+$result->failureReason();   // null, or a short explanation
+$result->assertVerified();
 ```
-
-A verifier backed by `atp-support` is bound by default, so `isFullyVerified()` means it. Without
-one, `signatureChecked` is `false` and an unchecked signature is never reported as valid.
 
 ### BLAKE3
 

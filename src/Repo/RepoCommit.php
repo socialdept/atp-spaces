@@ -3,15 +3,14 @@
 namespace SocialDept\AtpSpaces\Repo;
 
 use SocialDept\AtpSpaces\Contracts\Blake3Hasher;
-use SocialDept\AtpSpaces\Contracts\SignatureVerifier;
 
 /**
- * The contents of one member's permissioned repo, as a set hash.
+ * The contents of one member's space repo, as a set hash.
  *
- * Permissioned repos have no Merkle search tree. State is the set of records
- * they contain, folded into an {@see LtHash}, and a commit is a signature over
- * that set's digest. Syncing is therefore order-independent: apply operations
- * however they arrive and compare the digest at the end.
+ * Space repos have no Merkle search tree. State is the set of records they
+ * contain, folded into an {@see LtHash}, and a commit carries that set's
+ * digest. Syncing is therefore order-independent: apply operations however
+ * they arrive and compare the digest at the end.
  */
 class RepoCommit
 {
@@ -124,14 +123,14 @@ class RepoCommit
     }
 
     /**
-     * Whether these contents match a commit's claimed hash.
+     * Whether these contents match a commit's digest.
      *
-     * Verify the commit first — on its own this says nothing about
-     * authenticity, only that two digests agree.
+     * Verify the commit first. On its own this says nothing about where the
+     * commit came from, only that two digests agree.
      */
-    public function matches(SignedCommit $commit): bool
+    public function matches(Commit $commit): bool
     {
-        return hash_equals($this->setHash->digest(), $commit->hash);
+        return hash_equals($this->setHash->digest(), $commit->data);
     }
 
     /**
@@ -143,50 +142,19 @@ class RepoCommit
     }
 
     /**
-     * Check a commit's integrity, and its authenticity when able.
+     * Check a commit against the MAC its repo host sent, with the secret of
+     * the request it answered.
      *
-     * The MAC binds `hash` to the context; the signature covers the context
-     * alone. Without a verifier and a did:key the signature is left unchecked
-     * and the result says so.
+     * @param  string  $space  The space that was asked about
+     * @param  string  $repo  The repo that was asked about, a DID
      */
-    public static function verify(
-        SignedCommit $commit,
-        CommitContext $context,
-        ?SignatureVerifier $verifier = null,
-        ?string $didKey = null,
-    ): CommitVerification {
-        $versionSupported = $commit->isSupportedVersion();
-        $revisionMatches = hash_equals($context->rev, $commit->rev);
-
-        $contextBytes = $context->encode($commit->ikm);
-        $macValid = hash_equals(
-            self::computeMac($commit->ikm, $contextBytes, $commit->hash),
-            $commit->mac,
-        );
-
-        $signatureChecked = $verifier !== null && $didKey !== null;
-        $signatureValid = $signatureChecked
-            && $verifier->verify($didKey, $contextBytes, $commit->sig);
-
-        return new CommitVerification(
-            $versionSupported,
-            $revisionMatches,
-            $macValid,
-            $signatureChecked,
-            $signatureValid,
-        );
-    }
-
-    /**
-     * The MAC binding a repo hash to a commit context.
-     *
-     * HKDF here is expand-only, with the commit's `ikm` used directly as the
-     * pseudorandom key — not PHP's `hash_hkdf()`, which extracts first.
-     */
-    public static function computeMac(string $ikm, string $contextBytes, string $hash): string
+    public static function verify(Commit $commit, string $space, string $repo, string $sharedSecret, string $mac): CommitVerification
     {
-        $key = hash_hmac('sha256', $contextBytes."\x01", $ikm, true);
-
-        return hash_hmac('sha256', $hash, $key, true);
+        return new CommitVerification(
+            versionSupported: $commit->isSupportedVersion(),
+            repoMatches: hash_equals($repo, $commit->repo),
+            spaceMatches: hash_equals($space, $commit->space),
+            macValid: hash_equals(Mac::forCommit($sharedSecret, $commit), $mac),
+        );
     }
 }
