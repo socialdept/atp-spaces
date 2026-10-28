@@ -38,7 +38,7 @@ Think of it as a private corner of the Atmosphere that its owner decides who may
 - **Credentials handled for you** - The two-hop delegation-token exchange, DPoP binding, caching and renewal
 - **Reads across the space** - One credential reads every member's repo, wherever each one is hosted
 - **Space management** - Create spaces, admit members, and choose how the perimeter is enforced
-- **App-gated access** - Defer the decision to your own application, so entitlements stay in your database
+- **App-gated access** - Answer `checkUserAccess` yourself, so entitlements stay in your own database
 - **Verifiable state** - Repo commits check out against a set hash computed locally, signature and all
 - **Pinned lexicons** - Upstream definitions vendored verbatim, with a command that detects drift
 - **No app-specific opinions** - Ships no space types of its own, so you register yours
@@ -242,9 +242,7 @@ How the authority decides whether to admit a **user**:
 a credential is minted, so authorization stays in your own system instead of being mirrored
 into a member list. Entitlements, subscriptions, bans, whatever you already have.
 
-> [!NOTE]
-> Serving `checkUserAccess` is not implemented yet. Note also that an unreachable managing app
-> **denies**: with that policy, your endpoint's availability becomes your content's availability.
+See [Answering for a space](#answering-for-a-space) to serve that endpoint.
 
 Orthogonally, how it decides whether to admit an **app**:
 
@@ -252,6 +250,65 @@ Orthogonally, how it decides whether to admit an **app**:
 |--------|-----------|
 | `AppAccess::open()` | Any app. No client attestation required. The default. |
 | `AppAccess::allowList([...])` | Only the named OAuth client IDs, checked against an attestation. |
+
+## Answering for a Space
+
+When a space uses `SpacePolicy::managingApp()`, the authority calls your application to ask
+whether a user may enter. Implement a resolver:
+
+```php
+use SocialDept\AtpSpaces\Access\SpaceAccessRequest;
+use SocialDept\AtpSpaces\Contracts\SpaceAccessResolver;
+
+class SubscriberAccess implements SpaceAccessResolver
+{
+    public function authorize(SpaceAccessRequest $request): bool
+    {
+        if ($request->isOwner()) {
+            return true;
+        }
+
+        return Subscription::query()
+            ->where('publication_did', $request->space->authority)
+            ->where('subscriber_did', $request->user)
+            ->active()
+            ->exists();
+    }
+}
+```
+
+Bind it and turn the endpoint on:
+
+```php
+// config/atp-spaces.php
+'managing_app' => [
+    'enabled' => true,
+    'resolver' => App\Spaces\SubscriberAccess::class,
+],
+```
+
+```env
+ATP_SERVICE_AUTH_AUDIENCE=did:web:app.example.com#forum
+```
+
+That audience is the identifier you publish in your DID document and name in
+`SpacePolicy::managingApp()`. Requests are authenticated by `atp-client`'s `atp.service-auth`
+middleware, which verifies the authority's signature against its published key.
+
+Three things this endpoint does on your behalf:
+
+- **Confirms the caller governs the space it is asking about.** The middleware proves some
+  service signed for this method, but not which space it owns. Without that check any token
+  holder could ask who has access to anyone's space.
+- **Fails closed.** A throwing resolver, an unauthenticated request, or no resolver at all all
+  answer `false`. The reason goes to the log, not the response.
+- **Stays off until you turn it on.** The default resolver refuses everyone, so a half-finished
+  setup grants nothing.
+
+> [!IMPORTANT]
+> An unreachable managing app **denies**. Under this policy your endpoint's availability becomes
+> your content's availability, and the authority calls it while a user waits for a credential.
+> Keep the resolver fast, and be careful what it depends on.
 
 ## Credentials
 
