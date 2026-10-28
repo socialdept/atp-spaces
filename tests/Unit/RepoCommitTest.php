@@ -3,12 +3,12 @@
 namespace SocialDept\AtpSpaces\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
-use SocialDept\AtpSpaces\Contracts\SignatureVerifier;
 use SocialDept\AtpSpaces\Exceptions\RepoVerificationException;
-use SocialDept\AtpSpaces\Repo\CommitContext;
+use SocialDept\AtpSpaces\Repo\Commit;
+use SocialDept\AtpSpaces\Repo\Mac;
 use SocialDept\AtpSpaces\Repo\RepoCommit;
 use SocialDept\AtpSpaces\Repo\RepoOp;
-use SocialDept\AtpSpaces\Repo\SignedCommit;
+use SocialDept\AtpSpaces\Support\Cid;
 
 class RepoCommitTest extends TestCase
 {
@@ -105,152 +105,101 @@ class RepoCommitTest extends TestCase
         $this->assertSame('c/r', $create->path());
     }
 
-    public function test_matches_compares_against_a_commit_hash(): void
+    public function test_matches_compares_against_a_commit_digest(): void
     {
-        $commit = RepoCommit::fromIndex(['com.example.thread/1' => 'bafyA']);
-        $signed = $this->sign($commit->digest());
+        $repo = (new RepoCommit())->add('com.example.thread', '1', 'bafyA');
 
-        $this->assertTrue($commit->matches($signed));
-        $this->assertFalse(RepoCommit::fromIndex([])->matches($signed));
+        $this->assertTrue($repo->matches($this->commit($repo->digest())));
+        $this->assertFalse($repo->matches($this->commit(str_repeat("\0", 32))));
     }
 
-    public function test_the_mac_binds_the_hash_to_the_context(): void
+    /**
+     * Pinned to values computed with Node's crypto, so the MAC context cannot
+     * drift from the upstream format unnoticed.
+     */
+    public function test_the_commit_mac_matches_an_independent_vector(): void
     {
-        $commit = RepoCommit::fromIndex(['com.example.thread/1' => 'bafyA']);
-        $signed = $this->sign($commit->digest());
+        $commit = new Commit(1, 'did:plc:member', self::SPACE, self::REV, str_repeat("\x09", 32));
 
-        $result = RepoCommit::verify($signed, $this->context());
-
-        $this->assertTrue($result->isIntact());
-        $this->assertTrue($result->macValid);
-
-        // Integrity without a verifier is not full verification.
-        $this->assertFalse($result->isFullyVerified());
-        $this->assertFalse($result->signatureChecked);
-        $this->assertSame('commit signature was not checked', $result->failureReason());
-    }
-
-    public function test_a_commit_moved_to_another_space_fails_the_mac(): void
-    {
-        $signed = $this->sign(RepoCommit::fromIndex(['a/1' => 'bafyA'])->digest());
-
-        $elsewhere = new CommitContext(
-            'at://did:plc:authority/space/com.example.forum/other',
-            self::AUTHOR,
-            self::REV,
+        $this->assertSame(
+            '3f883686c9a14bd0ec37657428bef4f795d75038208d2c10bd602517bd339bb8',
+            bin2hex(Mac::forCommit(str_repeat("\x07", 32), $commit)),
         );
-
-        $this->assertFalse(RepoCommit::verify($signed, $elsewhere)->macValid);
     }
 
-    public function test_a_tampered_hash_fails_the_mac(): void
+    public function test_the_record_mac_matches_an_independent_vector(): void
     {
-        $signed = $this->sign(RepoCommit::fromIndex(['a/1' => 'bafyA'])->digest());
-
-        $tampered = new SignedCommit(
-            $signed->ver,
-            hash('sha256', 'something else', true),
-            $signed->ikm,
-            $signed->sig,
-            $signed->mac,
-            $signed->rev,
+        $this->assertSame(
+            'ee73fadd929e67296481af74cff016248549d3aafa35525e6f82b14618be3d6c',
+            bin2hex(Mac::forRecord(str_repeat("\x07", 32), self::SPACE.'/did:plc:member/com.example.thread/3abc', Cid::forBytes('x'))),
         );
-
-        $this->assertFalse(RepoCommit::verify($tampered, $this->context())->macValid);
     }
 
-    public function test_a_mismatched_revision_is_rejected(): void
+    public function test_a_commit_with_its_mac_verifies(): void
     {
-        $signed = $this->sign(RepoCommit::fromIndex(['a/1' => 'bafyA'])->digest());
+        $commit = $this->commit(str_repeat("\x01", 32));
+        $mac = Mac::forCommit($this->secret(), $commit);
 
-        $other = new CommitContext(self::SPACE, self::AUTHOR, '3different0000');
-
-        $result = RepoCommit::verify($signed, $other);
-
-        $this->assertFalse($result->revisionMatches);
-        $this->assertSame('commit revision does not match the context', $result->failureReason());
+        $this->assertTrue(RepoCommit::verify($commit, self::SPACE, self::AUTHOR, $this->secret(), $mac)->isVerified());
     }
 
-    public function test_an_unsupported_version_is_rejected(): void
+    public function test_another_secret_fails_the_mac(): void
     {
-        $signed = $this->sign(RepoCommit::fromIndex(['a/1' => 'bafyA'])->digest(), version: 99);
+        $commit = $this->commit(str_repeat("\x01", 32));
+        $mac = Mac::forCommit($this->secret(), $commit);
 
-        $result = RepoCommit::verify($signed, $this->context());
+        $result = RepoCommit::verify($commit, self::SPACE, self::AUTHOR, str_repeat("\xFF", 32), $mac);
 
-        $this->assertFalse($result->versionSupported);
-        $this->assertSame('unsupported commit version', $result->failureReason());
+        $this->assertFalse($result->macValid);
+        $this->assertSame('commit mac does not match', $result->failureReason());
     }
 
-    public function test_a_verifier_establishes_authenticity(): void
+    public function test_tampered_data_fails_the_mac(): void
     {
-        $commit = RepoCommit::fromIndex(['a/1' => 'bafyA']);
-        $signed = $this->sign($commit->digest());
+        $commit = $this->commit(str_repeat("\x01", 32));
+        $mac = Mac::forCommit($this->secret(), $commit);
 
-        $accepting = new class () implements SignatureVerifier {
-            public function verify(string $didKey, string $data, string $signature): bool
-            {
-                return true;
-            }
-        };
-
-        $result = RepoCommit::verify($signed, $this->context(), $accepting, 'did:key:zQ3sh');
-
-        $this->assertTrue($result->isFullyVerified());
-        $this->assertNull($result->failureReason());
+        $this->assertFalse(RepoCommit::verify($this->commit(str_repeat("\x02", 32)), self::SPACE, self::AUTHOR, $this->secret(), $mac)->isVerified());
     }
 
-    public function test_a_rejecting_verifier_fails_the_commit(): void
+    /**
+     * A host answering for another repo or space, even with a valid MAC over
+     * what it sent, is not answering the question asked.
+     */
+    public function test_a_commit_for_another_repo_or_space_fails(): void
     {
-        $signed = $this->sign(RepoCommit::fromIndex(['a/1' => 'bafyA'])->digest());
+        $commit = $this->commit(str_repeat("\x01", 32));
+        $mac = Mac::forCommit($this->secret(), $commit);
 
-        $rejecting = new class () implements SignatureVerifier {
-            public function verify(string $didKey, string $data, string $signature): bool
-            {
-                return false;
-            }
-        };
+        $this->assertSame('commit is for another repo', RepoCommit::verify($commit, self::SPACE, 'did:plc:someone-else', $this->secret(), $mac)->failureReason());
+        $this->assertSame('commit is for another space', RepoCommit::verify($commit, self::SPACE.'-other', self::AUTHOR, $this->secret(), $mac)->failureReason());
+    }
 
-        $result = RepoCommit::verify($signed, $this->context(), $rejecting, 'did:key:zQ3sh');
+    public function test_an_unsupported_version_fails(): void
+    {
+        $commit = new Commit(2, self::AUTHOR, self::SPACE, self::REV, str_repeat("\x01", 32));
+        $mac = Mac::forCommit($this->secret(), $commit);
 
-        $this->assertTrue($result->isIntact());
-        $this->assertFalse($result->isFullyVerified());
-        $this->assertSame('commit signature is invalid', $result->failureReason());
+        $this->assertSame('unsupported commit version', RepoCommit::verify($commit, self::SPACE, self::AUTHOR, $this->secret(), $mac)->failureReason());
     }
 
     public function test_it_can_assert_instead_of_returning(): void
     {
-        $commit = RepoCommit::fromIndex(['a/1' => 'bafyA']);
-        $result = RepoCommit::verify($this->sign($commit->digest()), $this->context());
-
-        // Integrity passes, so this is a no-op.
-        $result->assertIntact();
+        $commit = $this->commit(str_repeat("\x01", 32));
 
         $this->expectException(RepoVerificationException::class);
-        $this->expectExceptionMessage('commit signature was not checked');
+        $this->expectExceptionMessage('commit mac does not match');
 
-        $result->assertFullyVerified();
+        RepoCommit::verify($commit, self::SPACE, self::AUTHOR, $this->secret(), str_repeat("\0", 32))->assertVerified();
     }
 
-    protected function context(): CommitContext
+    protected function commit(string $data): Commit
     {
-        return new CommitContext(self::SPACE, self::AUTHOR, self::REV);
+        return new Commit(Commit::VERSION, self::AUTHOR, self::SPACE, self::REV, $data);
     }
 
-    /**
-     * Build a commit whose MAC is correct, standing in for a PDS.
-     */
-    protected function sign(string $hash, int $version = SignedCommit::VERSION): SignedCommit
+    protected function secret(): string
     {
-        $ikm = random_bytes(SignedCommit::IKM_BYTES);
-        $contextBytes = $this->context()->encode($ikm);
-
-        return new SignedCommit(
-            $version,
-            $hash,
-            $ikm,
-            'not-a-real-signature',
-            RepoCommit::computeMac($ikm, $contextBytes, $hash),
-            self::REV,
-        );
+        return str_repeat("\x07", 32);
     }
 }

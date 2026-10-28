@@ -9,17 +9,14 @@ use SocialDept\AtpSpaces\Auth\SpaceCredential;
 use SocialDept\AtpSpaces\Auth\SpaceToken;
 use SocialDept\AtpSpaces\Auth\SpaceTokenType;
 use SocialDept\AtpSpaces\Client\SpaceReader;
-use SocialDept\AtpSpaces\Contracts\SignatureVerifier;
 use SocialDept\AtpSpaces\Management\AppAccess;
 use SocialDept\AtpSpaces\Management\SpacePolicy;
-use SocialDept\AtpSpaces\Repo\CommitContext;
 use SocialDept\AtpSpaces\Repo\RepoCommit;
 use SocialDept\AtpSpaces\Repo\RepoOp;
 use SocialDept\AtpSpaces\SpaceRef;
 use SocialDept\AtpSpaces\Spaces;
 use SocialDept\AtpSpaces\Tests\Support\OAuthActor;
 use SocialDept\AtpSpaces\Tests\TestCase;
-use SocialDept\AtpSupport\Resolver;
 
 /**
  * The whole feature, against a real PDS.
@@ -172,12 +169,12 @@ class SpaceLifecycleTest extends TestCase
     }
 
     /**
-     * The commit a PDS signs must match the set hash computed here.
+     * The commit a PDS sends, checked against its MAC, must match the set hash computed here.
      *
      * This is what proves the BLAKE3 port and the LtHash accumulator against
      * real data rather than against our own fixtures.
      */
-    public function test_a_signed_commit_matches_a_locally_computed_set_hash(): void
+    public function test_a_verified_commit_matches_a_locally_computed_set_hash(): void
     {
         [$dad, $mom] = [$this->actors['dad'], $this->actors['mom']];
 
@@ -212,13 +209,13 @@ class SpaceLifecycleTest extends TestCase
         $this->assertNotEmpty($result['ops']);
         $this->assertInstanceOf(RepoOp::class, $result['ops'][0]);
         $this->assertNotNull($result['commit'], 'commit is present at the head of the oplog');
-        $this->assertSame(32, strlen($result['commit']->hash));
+        $this->assertSame(32, strlen($result['commit']->data));
 
         // Replaying the oplog reproduces what the PDS signed...
         $replayed = (new RepoCommit())->applyOps($result['ops']);
         $this->assertTrue(
             $replayed->matches($result['commit']),
-            'replayed oplog: '.bin2hex($replayed->digest()).' vs commit '.bin2hex($result['commit']->hash),
+            'replayed oplog: '.bin2hex($replayed->digest()).' vs commit '.bin2hex($result['commit']->data),
         );
 
         // ...and so does folding the record listing, which arrives in the
@@ -230,39 +227,12 @@ class SpaceLifecycleTest extends TestCase
             'record listing: '.bin2hex($listed->digest()),
         );
 
-        // Finally, authenticity: the signature is over the commit context, and
-        // the MAC is what ties the hash we just matched to that context. Both
-        // have to hold for the hash to mean anything.
-        $didKey = $this->app->make(Resolver::class)->resolveDid($dad->did)->getSigningKey();
-        $this->assertNotNull($didKey, 'the author publishes an #atproto key');
-
-        $verification = RepoCommit::verify(
-            $result['commit'],
-            CommitContext::for($this->space, $dad->did, $result['commit']->rev),
-            $this->app->make(SignatureVerifier::class),
-            $didKey,
-        );
-
-        $this->assertTrue($verification->macValid, 'mac binds the hash to the context');
-        $this->assertTrue($verification->signatureChecked);
-        $this->assertTrue(
-            $verification->isFullyVerified(),
-            'commit failed verification: '.($verification->failureReason() ?? '-'),
-        );
-
-        // A commit is signed for one space; it must not verify for another.
-        $elsewhere = RepoCommit::verify(
-            $result['commit'],
-            CommitContext::for(
-                SpaceRef::make($dad->did, self::SPACE_TYPE, 'a-different-space'),
-                $dad->did,
-                $result['commit']->rev,
-            ),
-            $this->app->make(SignatureVerifier::class),
-            $didKey,
-        );
-
-        $this->assertFalse($elsewhere->isFullyVerified());
+        // Finally, authenticity: the reader returned this commit only after
+        // the MAC dad's host sent checked out, keyed by a secret only this
+        // request shared with it, against dad's #atproto_kem key.
+        $this->assertSame($dad->did, $result['commit']->repo);
+        $this->assertSame((string) $this->space, $result['commit']->space);
+        $this->assertTrue($replayed->matches($reader->getLatestCommit($dad->did)), 'getLatestCommit carries the same verified digest');
     }
 
     /**

@@ -2,18 +2,25 @@
 
 namespace SocialDept\AtpSpaces\Client;
 
+use Closure;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\Response;
 use SocialDept\AtpSpaces\Auth\CredentialBroker;
 use SocialDept\AtpSpaces\Auth\SpaceCredential;
 use SocialDept\AtpSpaces\Authority\AuthorityResolver;
+use SocialDept\AtpSpaces\Crypto\Kem;
 use SocialDept\AtpSpaces\Enums\SpaceNsid;
 use SocialDept\AtpSpaces\Exceptions\CredentialException;
+use SocialDept\AtpSpaces\Exceptions\RepoVerificationException;
 use SocialDept\AtpSpaces\Exceptions\SpacesException;
+use SocialDept\AtpSpaces\Repo\Commit;
+use SocialDept\AtpSpaces\Repo\Mac;
+use SocialDept\AtpSpaces\Repo\RepoCommit;
 use SocialDept\AtpSpaces\Repo\RepoOp;
-use SocialDept\AtpSpaces\Repo\SignedCommit;
 use SocialDept\AtpSpaces\SpaceRef;
 use SocialDept\AtpSpaces\Support\Actor;
+use SocialDept\AtpSpaces\Support\Cid;
+use SocialDept\AtpSpaces\Support\Drisl\Drisl;
 use SocialDept\AtpSupport\Resolver;
 use Throwable;
 
@@ -28,6 +35,12 @@ use Throwable;
  * works at all of them, which is exactly why it is bound to a key rather than
  * passed as a bearer token: each request signs it together with the DID it is
  * for, the repo owner or the authority, so no host can replay it elsewhere.
+ *
+ * Commits and records come with a MAC from the member's host, keyed by a
+ * secret only this request shares with it (see {@see Kem}). Each is checked
+ * before it is returned, and one that fails is never returned. A failure is
+ * retried once after rereading the author's DID document, in case their KEM
+ * key rotated.
  */
 class SpaceReader
 {
@@ -78,20 +91,46 @@ class SpaceReader
     }
 
     /**
-     * One record from a member's repo.
+     * One record from a member's repo, checked against its MAC and its CID.
      *
      * @return array<string, mixed>
+     *
+     * @throws RepoVerificationException when the record does not check out
      */
     public function getRecord(string $repo, string $collection, string $rkey): array
     {
         $repo = Actor::did($repo);
+        $uri = (string) $this->space()->record($repo, $collection, $rkey);
 
-        return $this->get($this->repoUrl($repo, SpaceNsid::GetRecord), $repo, [
+        return $this->withMac($repo, SpaceNsid::GetRecord, Mac::RECORD, [
             'space' => (string) $this->space(),
             'repo' => $repo,
             'collection' => $collection,
             'rkey' => $rkey,
-        ]);
+        ], function (Response $response, string $secret) use ($uri) {
+            $json = (array) $response->json();
+
+            if (($json['uri'] ?? null) !== $uri || ! is_string($json['cid'] ?? null)) {
+                throw new RepoVerificationException("The repo host answered for another record than {$uri}.");
+            }
+
+            try {
+                $cid = Cid::parse($json['cid']);
+                $encoded = Drisl::encode(Drisl::fromJson($response->body())->value ?? null);
+            } catch (\Throwable $e) {
+                throw new RepoVerificationException("The record at {$uri} is not valid DRISL: ".$e->getMessage(), 0, $e);
+            }
+
+            if (! hash_equals(Mac::forRecord($secret, $uri, $cid), Mac::fromHeader($response->header(Mac::HEADER), Mac::RECORD))) {
+                throw new RepoVerificationException("The MAC for {$uri} does not match.");
+            }
+
+            if (! Cid::forBytes($encoded)->equals($cid)) {
+                throw new RepoVerificationException("The record at {$uri} does not match its CID.");
+            }
+
+            return $json;
+        });
     }
 
     /**
@@ -133,7 +172,11 @@ class SpaceReader
      * The log itself carries no history guarantee: a host may compact or drop
      * it, so a missing revision means falling back to a full listing.
      *
-     * @return array{ops: array<int, RepoOp>, commit: SignedCommit|null, cursor: string|null}
+     * The commit, when present, has been checked against its MAC.
+     *
+     * @return array{ops: array<int, RepoOp>, commit: Commit|null, cursor: string|null}
+     *
+     * @throws RepoVerificationException when the commit does not check out
      */
     public function listRepoOps(
         string $repo,
@@ -144,47 +187,55 @@ class SpaceReader
     ): array {
         $repo = Actor::did($repo);
 
-        $json = $this->get($this->repoUrl($repo, SpaceNsid::ListRepoOps), $repo, array_filter([
+        $params = array_filter([
             'space' => (string) $this->space(),
             'repo' => $repo,
             'since' => $since,
             'limit' => $limit,
             'cursor' => $cursor,
             'excludeValues' => $excludeValues ?: null,
-        ], fn ($value) => $value !== null));
+        ], fn ($value) => $value !== null);
 
-        $ops = [];
+        // Every page asks for a MAC, and only a page with a commit has one.
+        return $this->withMac($repo, SpaceNsid::ListRepoOps, Mac::COMMIT, $params, function (Response $response, string $secret) use ($repo) {
+            $json = (array) $response->json();
+            $ops = [];
 
-        foreach ($json['ops'] ?? [] as $entry) {
-            if (is_array($entry)) {
-                $ops[] = RepoOp::fromArray($entry);
+            foreach ($json['ops'] ?? [] as $entry) {
+                if (is_array($entry)) {
+                    $ops[] = RepoOp::fromArray($entry);
+                }
             }
-        }
 
-        return [
-            'ops' => $ops,
-            'commit' => isset($json['commit']) && is_array($json['commit'])
-                ? self::decodeCommit($json['commit'])
-                : null,
-            'cursor' => $json['cursor'] ?? null,
-        ];
+            $commit = isset($json['commit']) && is_array($json['commit'])
+                ? $this->verified(self::decodeCommit($json['commit']), $repo, $secret, $response)
+                : null;
+
+            return ['ops' => $ops, 'commit' => $commit, 'cursor' => $json['cursor'] ?? null];
+        });
     }
 
     /**
-     * A member's current signed commit.
+     * A member's current commit, checked against its MAC.
+     *
+     * @throws RepoVerificationException when the commit does not check out
      */
-    public function getLatestCommit(string $repo): SignedCommit
+    public function getLatestCommit(string $repo): Commit
     {
         $repo = Actor::did($repo);
 
-        $json = $this->get($this->repoUrl($repo, SpaceNsid::GetLatestCommit), $repo, [
+        return $this->withMac($repo, SpaceNsid::GetLatestCommit, Mac::COMMIT, [
             'space' => (string) $this->space(),
             'repo' => $repo,
-        ]);
+        ], function (Response $response, string $secret) use ($repo) {
+            $commit = $response->json()['commit'] ?? null;
 
-        $commit = is_array($json['commit'] ?? null) ? $json['commit'] : $json;
+            if (! is_array($commit)) {
+                throw new RepoVerificationException("The repo host sent no commit for {$repo}.");
+            }
 
-        return self::decodeCommit($commit);
+            return $this->verified(self::decodeCommit($commit), $repo, $secret, $response);
+        });
     }
 
     /**
@@ -237,23 +288,28 @@ class SpaceReader
     }
 
     /**
-     * Decode a signed commit from its JSON form.
+     * Decode a commit from its JSON form.
      *
-     * Lexicon `bytes` arrive as `{"$bytes": "<base64>"}` over JSON, so every
-     * binary field needs unwrapping before it means anything.
+     * Lexicon `bytes` arrive as `{"$bytes": "<base64>"}` over JSON, so `data`
+     * needs unwrapping before it means anything.
      *
      * @param  array<string, mixed>  $commit
+     *
+     * @throws RepoVerificationException when the commit is malformed
      */
-    public static function decodeCommit(array $commit): SignedCommit
+    public static function decodeCommit(array $commit): Commit
     {
-        return SignedCommit::fromArray([
-            'ver' => $commit['ver'] ?? SignedCommit::VERSION,
-            'hash' => self::decodeBytes($commit['hash'] ?? ''),
-            'ikm' => self::decodeBytes($commit['ikm'] ?? ''),
-            'sig' => self::decodeBytes($commit['sig'] ?? ''),
-            'mac' => self::decodeBytes($commit['mac'] ?? ''),
-            'rev' => $commit['rev'] ?? '',
-        ]);
+        try {
+            return Commit::fromArray([
+                'ver' => $commit['ver'] ?? null,
+                'repo' => $commit['repo'] ?? '',
+                'space' => $commit['space'] ?? '',
+                'rev' => $commit['rev'] ?? '',
+                'data' => self::decodeBytes($commit['data'] ?? ''),
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            throw new RepoVerificationException('Malformed commit: '.$e->getMessage(), 0, $e);
+        }
     }
 
     /**
@@ -287,6 +343,75 @@ class SpaceReader
     }
 
     /**
+     * Send a request that asks for a MAC, and hand the response and the
+     * secret to $verify. A failed check is retried once, after rereading the
+     * author's DID document, in case their KEM key rotated, with a fresh key
+     * share as every request needs.
+     *
+     * @template T
+     *
+     * @param  array<string, mixed>  $params
+     * @param  Closure(Response, string): T  $verify
+     * @return T
+     *
+     * @throws RepoVerificationException when it fails twice
+     */
+    protected function withMac(string $repo, SpaceNsid $method, string $type, array $params, Closure $verify): mixed
+    {
+        $failure = null;
+
+        foreach ([true, false] as $useCache) {
+            ['keyShare' => $keyShare, 'sharedSecret' => $secret] = Kem::encapsulate($this->kemKey($repo, $useCache));
+
+            $response = $this->send('GET', $this->repoUrl($repo, $method), $repo, $params, [
+                Mac::WANT_HEADER => Mac::wantHeader($type, $keyShare),
+            ]);
+
+            try {
+                return $verify($response, $secret);
+            } catch (RepoVerificationException $e) {
+                $failure = $e;
+            }
+        }
+
+        throw $failure;
+    }
+
+    /**
+     * Check a commit came from the repo and space asked about, with this
+     * request's MAC.
+     *
+     * @throws RepoVerificationException
+     */
+    protected function verified(Commit $commit, string $repo, string $secret, Response $response): Commit
+    {
+        RepoCommit::verify($commit, (string) $this->space(), $repo, $secret, Mac::fromHeader($response->header(Mac::HEADER), Mac::COMMIT))
+            ->assertVerified();
+
+        return $commit;
+    }
+
+    /**
+     * An author's `#atproto_kem` key, which every MAC is keyed against.
+     *
+     * @throws RepoVerificationException when the author publishes none
+     */
+    protected function kemKey(string $repo, bool $useCache = true): string
+    {
+        try {
+            $key = $this->resolver->resolveDid($repo, $useCache)->getSigningKey('#atproto_kem');
+        } catch (Throwable $e) {
+            throw new SpacesException("Could not resolve the DID document for \"{$repo}\": ".$e->getMessage(), 0, $e);
+        }
+
+        if ($key === null) {
+            throw new RepoVerificationException("\"{$repo}\" publishes no #atproto_kem key, so its space repo cannot be read with a credential yet.");
+        }
+
+        return $key;
+    }
+
+    /**
      * A GET returning decoded JSON.
      *
      * @param  string  $audience  The DID the request is for
@@ -309,13 +434,14 @@ class SpaceReader
      *
      * @param  string  $audience  The DID the request is for
      * @param  array<string, mixed>  $params
+     * @param  array<string, string>  $headers
      *
      * @throws CredentialException when the credential was revoked
      * @throws SpacesException
      */
-    protected function send(string $method, string $url, string $audience, array $params): Response
+    protected function send(string $method, string $url, string $audience, array $params, array $headers = []): Response
     {
-        $response = $this->dispatch($method, $url, $audience, $params);
+        $response = $this->dispatch($method, $url, $audience, $params, $headers);
 
         if ($this->errorOf($response) === 'CredentialRevoked') {
             $this->broker?->forget($this->space(), $this->credential->userDid);
@@ -338,11 +464,11 @@ class SpaceReader
     /**
      * @param  array<string, mixed>  $params
      */
-    protected function dispatch(string $method, string $url, string $audience, array $params): Response
+    protected function dispatch(string $method, string $url, string $audience, array $params, array $headers = []): Response
     {
         $request = $this->http
             ->timeout($this->timeout)
-            ->withHeaders($this->credential->headers($audience));
+            ->withHeaders($this->credential->headers($audience) + $headers);
 
         return $method === 'GET'
             ? $request->get($url, $params)
