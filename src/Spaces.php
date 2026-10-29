@@ -27,6 +27,7 @@ class Spaces
         protected Resolver $resolver,
         protected HttpFactory $http,
         protected int $timeout = 30,
+        protected ?string $service = null,
     ) {
     }
 
@@ -64,6 +65,7 @@ class Spaces
             $this->http,
             $this->timeout,
             $this->broker,
+            $this->service,
         );
     }
 

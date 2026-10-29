@@ -72,6 +72,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Syncer
+    |--------------------------------------------------------------------------
+    |
+    | Serve `com.atproto.space.notifyWrite` and `notifySpaceDeleted`, so the
+    | authority of a space this application registered for with
+    | `registerNotify()` can tell it when a member's repo advances or the space
+    | is deleted. Each call becomes an event: Events\SpaceWriteNotified and
+    | Events\SpaceDeletedNotified. Off by default, because the routes must be
+    | publicly reachable by the authority's PDS.
+    |
+    | Requests are authenticated with atp-client's `atp.service-auth`
+    | middleware, which checks the token against ATP_SERVICE_AUTH_AUDIENCE.
+    | That audience is the service identifier you register with, and its
+    | fragment names the DID document entry the authority delivers to.
+    |
+    */
+
+    'syncer' => [
+        'enabled' => env('SPACES_SYNCER', false),
+        'prefix' => env('SPACES_SYNCER_PREFIX', '/xrpc'),
+        'middleware' => [],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Lexicons
     |--------------------------------------------------------------------------
     |
