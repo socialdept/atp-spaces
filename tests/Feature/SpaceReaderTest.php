@@ -71,7 +71,7 @@ class SpaceReaderTest extends TestCase
         );
     }
 
-    protected function reader(HttpFactory $http, ?CredentialBroker $broker = null): SpaceReader
+    protected function reader(HttpFactory $http, ?CredentialBroker $broker = null, ?string $service = null): SpaceReader
     {
         $authorities = $this->createStub(AuthorityResolver::class);
         $authorities->method('forSpace')->willReturn(new SpaceAuthority(
@@ -89,7 +89,7 @@ class SpaceReaderTest extends TestCase
             ]],
         ]));
 
-        return new SpaceReader($this->credential(), $authorities, $resolver, $http, broker: $broker);
+        return new SpaceReader($this->credential(), $authorities, $resolver, $http, broker: $broker, service: $service);
     }
 
     protected function didKeyOf(PrivateKey $key): string
@@ -165,6 +165,79 @@ class SpaceReaderTest extends TestCase
         $this->reader($http)->listRepos();
 
         $this->assertSame(self::AUTHORITY, $seen['Atproto-Space-Audience']);
+    }
+
+    public function test_register_notify_names_the_service_to_the_authority(): void
+    {
+        $seen = null;
+        $http = new HttpFactory();
+        $http->fake(function ($request) use ($http, &$seen) {
+            $seen = $request;
+
+            return $http->response(['expiresAt' => '2026-10-30T12:00:00.000Z']);
+        });
+
+        $expiresAt = $this->reader($http, service: 'did:web:app.example.com#atproto_space_syncer')->registerNotify();
+
+        $this->assertSame('2026-10-30T12:00:00+00:00', $expiresAt->toIso8601String());
+        $this->assertSame('POST', $seen->method());
+        $this->assertSame(self::AUTHORITY_HOST.'/xrpc/com.atproto.space.registerNotify', $seen->url());
+        $this->assertSame(self::AUTHORITY, $seen->header('Atproto-Space-Audience')[0]);
+        $this->assertSame([
+            'space' => (string) $this->space(),
+            'service' => 'did:web:app.example.com#atproto_space_syncer',
+        ], $seen->data());
+    }
+
+    public function test_a_given_service_wins_over_the_configured_one(): void
+    {
+        $seen = null;
+        $http = new HttpFactory();
+        $http->fake(function ($request) use ($http, &$seen) {
+            $seen = $request->data()['service'];
+
+            return $http->response(['expiresAt' => '2026-10-30T12:00:00.000Z']);
+        });
+
+        $this->reader($http, service: 'did:web:app.example.com#configured')->registerNotify('did:web:other.example.com#syncer');
+
+        $this->assertSame('did:web:other.example.com#syncer', $seen);
+    }
+
+    public function test_register_notify_needs_a_service(): void
+    {
+        $http = new HttpFactory();
+        $http->fake(fn () => $this->fail('nothing should be sent'));
+
+        $this->expectException(SpacesException::class);
+
+        $this->reader($http)->registerNotify();
+    }
+
+    public function test_register_notify_needs_an_expiry_back(): void
+    {
+        $http = new HttpFactory();
+        $http->fake(fn () => $http->response([]));
+
+        $this->expectException(SpacesException::class);
+
+        $this->reader($http, service: 'did:web:app.example.com#syncer')->registerNotify();
+    }
+
+    public function test_unregister_notify_withdraws_the_service(): void
+    {
+        $seen = null;
+        $http = new HttpFactory();
+        $http->fake(function ($request) use ($http, &$seen) {
+            $seen = $request;
+
+            return $http->response();
+        });
+
+        $this->reader($http, service: 'did:web:app.example.com#syncer')->unregisterNotify();
+
+        $this->assertSame(self::AUTHORITY_HOST.'/xrpc/com.atproto.space.unregisterNotify', $seen->url());
+        $this->assertSame('did:web:app.example.com#syncer', $seen->data()['service']);
     }
 
     /**

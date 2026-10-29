@@ -332,6 +332,68 @@ Three things this endpoint does on your behalf:
 > your content's availability, and the authority calls it while a user waits for a credential.
 > Keep the resolver fast, and be careful what it depends on.
 
+## Syncing a Space
+
+Polling every member with `listRepoOps()` works, but the authority can tell you when something
+changes instead. Register your service for a space, and the authority calls you each time a
+member's repo advances, and once more if the space is deleted.
+
+```php
+$reader = $client->space->read($space);
+
+$expiresAt = $reader->registerNotify();
+```
+
+The registration lapses on its own, after a day on the alpha PDS. Register again before
+`$expiresAt` to stay subscribed, and call `unregisterNotify()` to stop early.
+
+Your service is named by the same identifier the managing app uses, a DID plus the fragment of
+the DID document entry the authority delivers to. It defaults to `ATP_SERVICE_AUTH_AUDIENCE`,
+or pass one to `registerNotify()`.
+
+```env
+ATP_SERVICE_AUTH_AUDIENCE=did:web:app.example.com#atproto_space_syncer
+SPACES_SYNCER=true
+```
+
+With the syncer on, the package serves `notifyWrite` and `notifySpaceDeleted` and turns each
+call into an event:
+
+```php
+use SocialDept\AtpSpaces\Events\SpaceDeletedNotified;
+use SocialDept\AtpSpaces\Events\SpaceWriteNotified;
+
+Event::listen(function (SpaceWriteNotified $event) {
+    $last = SyncState::lastSpaceRev($event->space);
+
+    if (! $event->follows($last)) {
+        // Notifications were missed. Catch up with listRepos() from $last.
+    }
+
+    // Then read what changed with listRepoOps($event->repo, since: ...).
+});
+
+Event::listen(function (SpaceDeletedNotified $event) {
+    // Drop your copy of $event->space.
+});
+```
+
+A notification says only that a repo moved, never what changed, so a listener reads the new
+state itself. Queue your listeners: the authority does not wait long for an answer.
+
+Two things these endpoints do on your behalf:
+
+- **Confirm the caller governs the space.** As with the managing app, the middleware proves some
+  service signed for the method, and the package checks that the signer is that space's own
+  authority. Without it anyone with a token could tell you a space was deleted.
+- **Stay off until you turn them on.** The routes must be reachable from the public internet.
+
+> [!NOTE]
+> Delivery is best effort. The authority does not retry a write notification, so treat the
+> events as a prompt to sync, not as the record of what happened. `prevSpaceRev` is how you
+> notice a gap, and a deletion you miss surfaces later as `SpaceDeleted` when a credential is
+> renewed.
+
 ## Credentials
 
 Getting into a space takes two hops, because the two halves answer different questions. Your PDS

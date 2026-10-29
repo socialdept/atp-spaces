@@ -18,7 +18,9 @@ use SocialDept\AtpSpaces\Contracts\CredentialStore;
 use SocialDept\AtpSpaces\Contracts\SpaceAccessResolver;
 use SocialDept\AtpSpaces\Crypto\Blake3;
 use SocialDept\AtpSpaces\Enums\SimpleSpaceNsid;
+use SocialDept\AtpSpaces\Enums\SpaceNsid;
 use SocialDept\AtpSpaces\Http\Controllers\CheckUserAccessController;
+use SocialDept\AtpSpaces\Http\Controllers\SyncerController;
 use SocialDept\AtpSpaces\Lexicons\LexiconManifest;
 use SocialDept\AtpSupport\Resolver;
 
@@ -93,6 +95,7 @@ class AtpSpacesServiceProvider extends ServiceProvider
                 $app->make(Resolver::class),
                 $app->make(HttpFactory::class),
                 $this->timeout($app),
+                $app['config']['atp-client.service_auth.audience'] ?? null,
             );
         });
 
@@ -116,6 +119,7 @@ class AtpSpacesServiceProvider extends ServiceProvider
         AtpClient::extend('space', fn (AtpClient $atp) => new SpaceDomainClient($atp));
 
         $this->registerManagingAppRoute();
+        $this->registerSyncerRoutes();
 
         if ($this->app->runningInConsole()) {
             $this->bootForConsole();
@@ -146,6 +150,34 @@ class AtpSpacesServiceProvider extends ServiceProvider
         Route::get($path, CheckUserAccessController::class)
             ->middleware($middleware)
             ->name('atp-spaces.check-user-access');
+    }
+
+    /**
+     * Expose `notifyWrite` and `notifySpaceDeleted`, so the authority of a
+     * space this application registered for can say when it changes.
+     *
+     * Opt-in: the routes must be reachable from the public internet, and they
+     * do nothing until something listens for their events.
+     */
+    protected function registerSyncerRoutes(): void
+    {
+        $config = (array) ($this->app['config']['atp-spaces.syncer'] ?? []);
+
+        if (! ($config['enabled'] ?? false)) {
+            return;
+        }
+
+        $prefix = rtrim((string) ($config['prefix'] ?? '/xrpc'), '/');
+        $middleware = (array) ($config['middleware'] ?? []);
+
+        foreach ([
+            'write' => SpaceNsid::NotifyWrite,
+            'spaceDeleted' => SpaceNsid::NotifySpaceDeleted,
+        ] as $action => $nsid) {
+            Route::post($prefix.'/'.$nsid->value, [SyncerController::class, $action])
+                ->middleware(array_merge(['atp.service-auth:'.$nsid->value], $middleware))
+                ->name('atp-spaces.'.$nsid->value);
+        }
     }
 
     /**

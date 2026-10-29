@@ -2,6 +2,7 @@
 
 namespace SocialDept\AtpSpaces\Client;
 
+use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\Response;
@@ -52,6 +53,7 @@ class SpaceReader
         protected HttpFactory $http,
         protected int $timeout = 30,
         protected ?CredentialBroker $broker = null,
+        protected ?string $service = null,
     ) {
     }
 
@@ -89,6 +91,60 @@ class SpaceReader
             'repos' => is_array($json['repos'] ?? null) ? $json['repos'] : [],
             'cursor' => $json['cursor'] ?? null,
         ];
+    }
+
+    /**
+     * Ask the authority to notify a service whenever a member's repo in this
+     * space advances, and when the space is deleted.
+     *
+     * The service is named by its identifier, a DID plus the fragment of the
+     * DID document entry to deliver to, because that is the audience the
+     * authority signs its calls for. The registration lapses at the returned
+     * time, so renew it before then. Registering again replaces it.
+     *
+     * @param  string|null  $service  Defaults to ATP_SERVICE_AUTH_AUDIENCE
+     *
+     * @throws SpacesException
+     */
+    public function registerNotify(?string $service = null): CarbonImmutable
+    {
+        $url = $this->authorities->forSpace($this->space())->xrpc(SpaceNsid::RegisterNotify->value);
+
+        $json = $this->send('POST', $url, $this->space()->authority, [
+            'space' => (string) $this->space(),
+            'service' => $this->service($service),
+        ])->json();
+
+        $expiresAt = is_array($json) ? ($json['expiresAt'] ?? null) : null;
+
+        if (! is_string($expiresAt)) {
+            throw new SpacesException('The authority registered the service without saying when it expires.');
+        }
+
+        try {
+            return CarbonImmutable::parse($expiresAt);
+        } catch (Throwable $e) {
+            throw new SpacesException("The authority answered an unreadable expiry: {$expiresAt}.", 0, $e);
+        }
+    }
+
+    /**
+     * Withdraw a registration made with {@see registerNotify()}.
+     *
+     * Succeeds whether or not one existed.
+     *
+     * @param  string|null  $service  Defaults to ATP_SERVICE_AUTH_AUDIENCE
+     *
+     * @throws SpacesException
+     */
+    public function unregisterNotify(?string $service = null): void
+    {
+        $url = $this->authorities->forSpace($this->space())->xrpc(SpaceNsid::UnregisterNotify->value);
+
+        $this->send('POST', $url, $this->space()->authority, [
+            'space' => (string) $this->space(),
+            'service' => $this->service($service),
+        ]);
     }
 
     /**
@@ -525,6 +581,22 @@ class SpaceReader
         return $method === 'GET'
             ? $request->get($url, $params)
             : $request->send($method, $url, ['json' => $params]);
+    }
+
+    /**
+     * The service identifier to register, given or configured.
+     *
+     * @throws SpacesException when there is neither
+     */
+    protected function service(?string $service): string
+    {
+        $service ??= $this->service;
+
+        if ($service === null || $service === '') {
+            throw new SpacesException('No service to register: pass one, or set ATP_SERVICE_AUTH_AUDIENCE.');
+        }
+
+        return $service;
     }
 
     protected function errorOf(Response $response): ?string
