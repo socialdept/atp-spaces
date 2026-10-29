@@ -443,6 +443,28 @@ try {
 An authority that would rather not disclose which perimeter failed returns `NotAuthorized`, and
 both predicates are false.
 
+### When the session lives in the browser
+
+An app whose users' OAuth sessions live in the browser has no session on the server to ask the PDS
+with. The browser asks its own PDS for the delegation token instead, with
+`com.atproto.space.getDelegationToken`, and sends it to your server, which spends it:
+
+```php
+use SocialDept\AtpSpaces\Facades\Spaces;
+
+$credential = Spaces::credentialFromDelegation($space, $request->input('delegationToken'));
+
+$credential->userDid;   // the user the token names
+$reader = Spaces::readerFor($credential);
+```
+
+The credential is bound to your server's key as usual, and stored under the user the token names.
+The token itself is not checked against the user's signing key here. The authority does that
+before it issues anything, so the user it names is trusted only once a credential comes back.
+A token for a different space, or one aimed at a different authority, is refused before it is
+sent, with a `CredentialException` whose `error` is `InvalidDelegationToken` or
+`BadJwtAudience`.
+
 ## Verifying Repo State
 
 Space repos have no Merkle search tree. State is the *set* of records a repo contains, folded into

@@ -11,6 +11,7 @@ use SocialDept\AtpSpaces\Client\Requests\SpaceRepoRequestClient;
 use SocialDept\AtpSpaces\Contracts\CredentialStore;
 use SocialDept\AtpSpaces\Enums\SpaceNsid;
 use SocialDept\AtpSpaces\Exceptions\CredentialException;
+use SocialDept\AtpSpaces\Exceptions\SpaceTokenException;
 use SocialDept\AtpSpaces\SpaceRef;
 use SocialDept\AtpSpaces\Support\Actor;
 use Throwable;
@@ -76,7 +77,64 @@ class CredentialBroker
     ): SpaceCredential {
         $userDid ??= $client->client->session()->did();
 
-        $delegation = $this->delegationToken($space, $client);
+        return $this->exchangeDelegation($space, $this->delegationToken($space, $client), $userDid, $clientAttestation);
+    }
+
+    /**
+     * Mint a credential from a delegation token someone else obtained.
+     *
+     * For an application whose users' sessions live in the browser: the
+     * browser asks its own PDS for a delegation token and hands it over, and
+     * the credential is bound to a key this application holds. The token is
+     * not verified here, the authority does that, so the user it names is
+     * only trusted once the authority has issued a credential for it.
+     *
+     * The credential is stored like one from {@see for()}, under the user
+     * the token names.
+     *
+     * @param  string  $delegationToken  The compact JWT from `getDelegationToken`
+     * @param  string|null  $clientAttestation  Required when the space gates on app identity
+     *
+     * @throws CredentialException
+     */
+    public function fromDelegation(
+        SpaceRef $space,
+        string $delegationToken,
+        ?string $clientAttestation = null,
+    ): SpaceCredential {
+        try {
+            $delegation = SpaceToken::parse(SpaceTokenType::Delegation, $delegationToken);
+        } catch (SpaceTokenException $e) {
+            throw new CredentialException('Not a usable delegation token: '.$e->getMessage(), 'InvalidDelegationToken', $e);
+        }
+
+        // The token's subject is the space it was minted for. Checking it here
+        // keeps a token for one space from being filed under another.
+        if ($delegation->subject() !== (string) $space) {
+            throw new CredentialException(
+                "The delegation token is for {$delegation->subject()}, not {$space}.",
+                'InvalidDelegationToken',
+            );
+        }
+
+        $credential = $this->exchangeDelegation($space, $delegation, $delegation->issuer(), $clientAttestation);
+
+        $this->store->put($credential);
+
+        return $credential;
+    }
+
+    /**
+     * Check a delegation token against the space's authority and spend it.
+     *
+     * @throws CredentialException
+     */
+    protected function exchangeDelegation(
+        SpaceRef $space,
+        SpaceToken $delegation,
+        string $userDid,
+        ?string $clientAttestation,
+    ): SpaceCredential {
         $authority = $this->authorities->forSpace($space);
 
         // A delegation token names the authority as its audience, so one minted

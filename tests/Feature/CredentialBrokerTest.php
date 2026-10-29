@@ -2,6 +2,8 @@
 
 namespace SocialDept\AtpSpaces\Tests\Feature;
 
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\Repository;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use PHPUnit\Framework\Attributes\DataProvider;
 use SocialDept\AtpSpaces\Auth\CredentialBroker;
@@ -10,7 +12,9 @@ use SocialDept\AtpSpaces\Auth\SpaceToken;
 use SocialDept\AtpSpaces\Auth\SpaceTokenType;
 use SocialDept\AtpSpaces\Authority\AuthorityResolver;
 use SocialDept\AtpSpaces\Authority\SpaceAuthority;
+use SocialDept\AtpSpaces\Cache\CacheCredentialStore;
 use SocialDept\AtpSpaces\Cache\NullCredentialStore;
+use SocialDept\AtpSpaces\Contracts\CredentialStore;
 use SocialDept\AtpSpaces\Exceptions\CredentialException;
 use SocialDept\AtpSpaces\SpaceRef;
 use SocialDept\AtpSpaces\Tests\MintsTokens;
@@ -33,7 +37,7 @@ class CredentialBrokerTest extends TestCase
      * A broker whose PDS hop and authority hop are both stubbed, so only the
      * exchange itself is under test.
      */
-    protected function broker(HttpFactory $http, ?string $delegation = null): TestableBroker
+    protected function broker(HttpFactory $http, ?string $delegation = null, ?CredentialStore $store = null): TestableBroker
     {
         $authorities = $this->createStub(AuthorityResolver::class);
         $authorities->method('forSpace')->willReturn(new SpaceAuthority(
@@ -43,7 +47,7 @@ class CredentialBrokerTest extends TestCase
 
         return new TestableBroker(
             $authorities,
-            new NullCredentialStore(),
+            $store ?? new NullCredentialStore(),
             $http,
             $delegation ?? $this->mintDelegationToken(self::USER, (string) $this->space(), self::AUTHORITY),
         );
@@ -173,6 +177,70 @@ class CredentialBrokerTest extends TestCase
     }
 
     /**
+     * A browser that holds the session hands over the token, and the
+     * credential is bound to this application's key all the same.
+     */
+    public function test_it_mints_from_a_delegation_token_it_is_handed(): void
+    {
+        $seen = [];
+        $store = new CacheCredentialStore(new Repository(new ArrayStore()));
+        $token = $this->mintDelegationToken(self::USER, (string) $this->space(), self::AUTHORITY);
+
+        $credential = $this->broker($this->fakeAuthority(seen: $seen), store: $store)
+            ->fromDelegation($this->space(), $token, 'the-attestation');
+
+        $this->assertTrue($credential->isCorrectlyBound());
+        $this->assertSame(self::USER, $credential->userDid);
+        $this->assertSame($token, $seen['body']['delegationToken']);
+        $this->assertSame('the-attestation', $seen['body']['clientAttestation']);
+        $this->assertSame($credential->token->jwt, $store->get($this->space(), self::USER)?->token->jwt);
+    }
+
+    public function test_a_handed_token_for_another_space_is_refused(): void
+    {
+        $other = SpaceRef::make(self::AUTHORITY, 'com.example.forum', 'other');
+        $token = $this->mintDelegationToken(self::USER, (string) $other, self::AUTHORITY);
+        $seen = [];
+
+        try {
+            $this->broker($this->fakeAuthority(seen: $seen))->fromDelegation($this->space(), $token);
+            $this->fail('Expected a CredentialException.');
+        } catch (CredentialException $e) {
+            $this->assertSame('InvalidDelegationToken', $e->error);
+            $this->assertStringContainsString('not '.$this->space(), $e->getMessage());
+        }
+
+        $this->assertSame([], $seen, 'The token is never sent.');
+    }
+
+    public function test_a_handed_token_for_another_authority_is_refused(): void
+    {
+        $token = $this->mintDelegationToken(self::USER, (string) $this->space(), 'did:plc:elsewhere');
+
+        $this->expectException(CredentialException::class);
+        $this->expectExceptionMessage('audience does not match');
+
+        $this->broker($this->fakeAuthority())->fromDelegation($this->space(), $token);
+    }
+
+    /**
+     * A credential is not a delegation token, even though both are JWTs.
+     */
+    public function test_a_handed_token_of_the_wrong_kind_is_refused(): void
+    {
+        $credential = $this->mintCredential(self::AUTHORITY, (string) $this->space(), CredentialKey::generate());
+
+        foreach ([$credential, 'not-a-jwt'] as $token) {
+            try {
+                $this->broker($this->fakeAuthority())->fromDelegation($this->space(), $token);
+                $this->fail('Expected a CredentialException.');
+            } catch (CredentialException $e) {
+                $this->assertSame('InvalidDelegationToken', $e->error);
+            }
+        }
+    }
+
+    /**
      * Fake the authority, echoing back a credential bound to whichever key
      * the request named.
      *
@@ -219,7 +287,7 @@ class TestableBroker extends CredentialBroker
 {
     public function __construct(
         AuthorityResolver $authorities,
-        NullCredentialStore $store,
+        CredentialStore $store,
         HttpFactory $http,
         protected string $delegationJwt,
     ) {

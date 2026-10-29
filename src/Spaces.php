@@ -43,6 +43,18 @@ class Spaces
     }
 
     /**
+     * A credential from a delegation token the user's browser obtained, for
+     * when their session lives there rather than on this server.
+     */
+    public function credentialFromDelegation(
+        SpaceRef $space,
+        string $delegationToken,
+        ?string $clientAttestation = null,
+    ): SpaceCredential {
+        return $this->broker->fromDelegation($space, $delegationToken, $clientAttestation);
+    }
+
+    /**
      * A reader for a space, credentialed on this user's behalf.
      */
     public function reader(
