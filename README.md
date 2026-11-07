@@ -17,34 +17,12 @@
 > [!WARNING]
 > **Don't use this in production.** Spaces are an alpha AT Protocol extension. The lexicons this
 > package is built against are still moving, and so is this package. It tracks the October 22,
-> 2026 alpha release. Only alpha PDS software serves these endpoints today. Pin a version, expect breaking changes, and treat anything you
-> store as throwaway.
+> 2026 alpha release. Only alpha PDS software serves these endpoints today. Pin a version, expect
+> breaking changes, and treat anything you store as throwaway.
 
-## What is Spaces?
+This package works with atproto spaces, AT Protocol's permissioned data: records only certain people and applications can read. It creates and manages spaces, writes to your own repo inside them, reads every member's repo with one space credential, and checks what it reads against each member's host. To learn all about it, head over to [the documentation](https://socialde.pt/docs/atp-spaces).
 
-**Spaces** is a Laravel package for **atproto spaces**, AT Protocol's permissioned data: records only
-certain people and applications can read. Private drafts, subscriber-only publications, group
-discussions, anything you don't want on the public firehose.
-
-A space is an authorization and sync boundary. It is **not** encryption. Records stay plaintext
-to any authorized reader. It is **not** a separate database either. Each member's records live
-in their own repo on their own PDS, right next to their public ones.
-
-Think of it as a private corner of the Atmosphere that its owner decides who may enter.
-
-## Why use Spaces?
-
-- **Familiar addressing** - `SpaceRef` and `SpaceRecordUri` parse and build space URIs as immutable value objects
-- **Credentials handled for you** - The two-hop delegation-token exchange, key binding, request signing, caching and renewal
-- **Reads across the space** - One credential reads every member's repo, wherever each one is hosted
-- **Space management** - Create spaces, admit members, and choose how the perimeter is enforced
-- **App-gated access** - Answer `checkUserAccess` yourself, so entitlements stay in your own database
-- **Verifiable state** - Commits and records checked against a MAC from each member's host, and commits against a set hash computed locally
-- **Pinned lexicons** - Upstream definitions vendored verbatim, with a command that detects drift
-- **No app-specific opinions** - Ships no space types of its own, so you register yours
-- **DIDs or handles** - Anywhere an actor is named, either works, matching the rest of the `atp-*` packages
-
-## Quick Example
+Here are a few short examples of what you can do. Create a space you own and admit someone:
 
 ```php
 use SocialDept\AtpClient\Facades\Atp;
@@ -52,577 +30,58 @@ use SocialDept\AtpSpaces\Management\SpacePolicy;
 
 $client = Atp::as('alice.example.com');
 
-// Create a space you own, and admit someone
 $space = $client->space->manage->createSpace('com.example.forum', SpacePolicy::memberList());
 $client->space->manage->putMember($space, 'bob.example.com');
+```
 
-// Write to your own repo inside it
+Write to your own repo inside it:
+
+```php
 $client->space->repo->createRecord($space, 'com.example.thread', [
     '$type' => 'com.example.thread',
     'title' => 'Hello, members',
 ]);
+```
 
-// Read someone else's repo inside it
+Read someone else's repo inside it:
+
+```php
 $reader = $client->space->read($space);
 
-$reader->listRepos();                                   // who is in the space
+$reader->listRepos();
 $reader->listRecords('bob.example.com', 'com.example.thread');
 ```
 
-## Installation
-
-```bash
-composer require socialdept/atp-spaces
-```
-
-Publish the configuration:
-
-```bash
-php artisan vendor:publish --tag=atp-spaces-config
-```
-
-## Getting Started
-
-### Addressing a space
-
-A space is named by a triple. The DID that governs it, an NSID for its kind, and a key
-distinguishing it from others of that kind.
+Ask for access to a space with its own OAuth scope:
 
 ```php
+use SocialDept\AtpSpaces\Scopes\SpaceScope;
 use SocialDept\AtpSpaces\SpaceRef;
 
 $space = SpaceRef::make('did:plc:alice', 'com.example.forum', 'main');
-(string) $space;   // at://did:plc:alice/space/com.example.forum/main
-
-$space = SpaceRef::parse('at://did:plc:alice/space/com.example.forum/main');
-$space->authority; // did:plc:alice
-$space->type;      // com.example.forum
-$space->skey;      // main
-
-$record = $space->record('did:plc:bob', 'com.example.thread', '3abc');
-$record->path();   // com.example.thread/3abc
-```
-
-`SpaceRef::tryParse()` and `SpaceRecordUri::tryParse()` return `null` rather than throwing.
-
-### Declaring space types
-
-A space type names a kind of space and lists the collections clients should expect in it. This
-package ships none, because a space type belongs to whoever defines it. Register yours in
-`config/atp-spaces.php`:
-
-```php
-'types' => [
-    'com.example.forum' => [
-        'key' => 'any',
-        'name' => 'Example Forum',
-        'collections' => ['com.example.thread', 'com.example.reply'],
-    ],
-],
-```
-
-```php
-use SocialDept\AtpSpaces\SpaceTypeRegistry;
-
-$type = app(SpaceTypeRegistry::class)->get('com.example.forum');
-
-$type->nameFor('es');                  // name for an OAuth consent screen
-$type->collections;                    // what clients should expect
-$type->space('did:plc:alice', 'main'); // a SpaceRef
-```
-
-The collection list is a recommendation, not a constraint. A space accepts records outside it.
-It exists so consent screens can describe the access being requested.
-
-### Requesting access
-
-Spaces use their own OAuth scope. Parameters equal to their default are omitted, so the
-shortest form is the canonical one.
-
-```php
-use SocialDept\AtpSpaces\Scopes\SpaceAction;
-use SocialDept\AtpSpaces\Scopes\SpaceScope;
-
-(string) SpaceScope::for('com.example.forum');
-// space:com.example.forum
 
 (string) SpaceScope::forSpace($space)->readOnly();
 // space:com.example.forum?authority=did:plc:alice&skey=main&action=read
-
-(string) SpaceScope::for('com.example.forum')
-    ->collections(['com.example.thread'])
-    ->actions([SpaceAction::Create, SpaceAction::Update]);
-// space:com.example.forum?collection=com.example.thread&action=create&action=update
 ```
 
-Defaults: `authority=self`, `skey=*`, no collections, the four non-`read_self` actions, and no
-management operations.
+It builds on [atp-client](https://github.com/socialdept/atp-client) for OAuth sessions and service auth, and on [atp-support](https://github.com/socialdept/atp-support) for identity resolution.
 
-## Reading and Writing
+## Documentation
 
-The two halves of the protocol authenticate differently, and this package keeps that visible.
+You'll find the documentation on [https://socialde.pt/docs/atp-spaces](https://socialde.pt/docs/atp-spaces).
 
-**Writes go to your own PDS, under your OAuth session.** You can only write to your own repo, in
-a space you belong to.
+Find yourself stuck using the package? Found a bug? Do you have general questions or suggestions for improving it? Feel free to [create an issue on GitHub](https://github.com/socialdept/atp-spaces/issues).
 
-```php
-$client->space->repo->createRecord($space, 'com.example.thread', $record, rkey: '3abc');
-$client->space->repo->putRecord($space, 'com.example.thread', '3abc', $record);
-$client->space->repo->deleteRecord($space, 'com.example.thread', '3abc');
-$client->space->repo->applyWrites($space, $writes);
-
-$client->space->repo->listSpaces();   // spaces you have written to
-```
-
-**Reads go to each member's own host, under a space credential.** There is no relay for
-space data, so reading a space means visiting its members in turn. Anywhere a member is
-named, a DID or a handle both work. A DID costs nothing, a handle is resolved for you.
-
-```php
-$reader = $client->space->read($space);
-
-$reader->listRepos();                                   // who writes, by spaceRev
-$reader->getRecord($did, 'com.example.thread', '3abc'); // checked against its MAC and CID
-$reader->listRecords($did, 'com.example.thread');
-$reader->getBlob($did, $cid);
-$reader->getRepo($did);    // ['commit' => …, 'records' => [...]], checked whole
-```
-
-`listRepos()` returns each writer's latest state, `{ did, repoRev, data, spaceRev }`, in
-`spaceRev` order. Its cursor is the last `spaceRev` read, so keep it as a checkpoint: pass it back
-to read on, and an empty page, with no cursor, means you are caught up.
-
-`getRepo()` reads a member's whole repo from a STAR archive. It returns only once the commit's MAC
-checks out and the records, folded into a set hash, reproduce the commit's digest. Records come in
-path order with their CID and value. When replacing a local copy, drop what is not there.
-
-### Incremental sync
-
-```php
-use SocialDept\AtpSpaces\Repo\RepoCommit;
-
-$result = $reader->listRepoOps($memberDid, since: $cursor);
-
-$repo = RepoCommit::fromState($savedState)->applyOps($result['ops']);
-
-// The commit arrives only once you reach the head of the log, which is
-// exactly when comparing digests means something. It is already verified.
-if ($result['commit'] && $repo->matches($result['commit'])) {
-    // in sync
-}
-```
-
-The oplog is a transport optimization with no history guarantee: a host may compact or drop it.
-When `since` is too old, fall back to `listRecords()` or `getRepo()`.
-
-## Managing Spaces
-
-A space is anchored on the authenticated user's DID, who becomes its owner.
-
-```php
-use SocialDept\AtpSpaces\Management\AppAccess;
-use SocialDept\AtpSpaces\Management\SpacePolicy;
-
-$space = $client->space->manage->createSpace(
-    spaceType: 'com.example.forum',
-    readPolicy: SpacePolicy::memberList(),
-    writePolicy: SpacePolicy::memberList(),
-    appAccess: AppAccess::open(),
-);
-
-$client->space->manage->putMember($space, 'bob.example.com');                 // read and write
-$client->space->manage->putMember($space, 'carol.example.com', write: false); // read only
-$client->space->manage->removeMember($space, 'did:plc:bob');
-$client->space->manage->listMembers($space);   // each with did, read and write
-$client->space->manage->updateSpace($space, readPolicy: SpacePolicy::public());
-$client->space->manage->deleteSpace($space);
-```
-
-`putMember()` sets both permissions at once, replacing what the member had. `addMember()` still
-works, as a deprecated shortcut for a member who may read and write.
-
-### Access policies
-
-A space has two policies, one for reading and one for writing. The read policy decides who is
-issued a credential, and so who can see the space. The write policy decides whose repo the
-authority tracks and whose writes it forwards to readers. Nobody can be stopped from writing
-into their own repo, only from being counted in the space. Each is one of:
-
-| Policy | Behaviour |
-|--------|-----------|
-| `SpacePolicy::memberList()` | Only DIDs on the space's member list. The default. |
-| `SpacePolicy::public()` | Anyone who asks. |
-| `SpacePolicy::managingApp($did)` | Your application is asked, per request. |
-
-`managingApp` is the interesting one. The authority calls your app's `checkUserAccess`, for
-reading each time a credential is minted and for writing when a member writes, so authorization
-stays in your own system instead of being mirrored into a member list. Entitlements,
-subscriptions, bans, whatever you already have.
-
-See [Answering for a space](#answering-for-a-space) to serve that endpoint.
-
-Orthogonally, how it decides whether to admit an **app**:
-
-| Policy | Behaviour |
-|--------|-----------|
-| `AppAccess::open()` | Any app. No client attestation required. The default. |
-| `AppAccess::allowList([...])` | Only the named OAuth client IDs, checked against an attestation. |
-
-## Answering for a Space
-
-When a space uses `SpacePolicy::managingApp()`, the authority calls your application to ask
-whether a user may read the space, or write to it. Implement a resolver:
-
-```php
-use SocialDept\AtpSpaces\Access\SpaceAccessRequest;
-use SocialDept\AtpSpaces\Contracts\SpaceAccessResolver;
-
-class SubscriberAccess implements SpaceAccessResolver
-{
-    public function authorize(SpaceAccessRequest $request): bool
-    {
-        if ($request->isOwner()) {
-            return true;
-        }
-
-        // Subscribers read, and only staff write.
-        if ($request->isWrite()) {
-            return Staff::query()->where('did', $request->user)->exists();
-        }
-
-        return Subscription::query()
-            ->where('publication_did', $request->space->authority)
-            ->where('subscriber_did', $request->user)
-            ->active()
-            ->exists();
-    }
-}
-```
-
-Bind it and turn the endpoint on:
-
-```php
-// config/atp-spaces.php
-'managing_app' => [
-    'enabled' => true,
-    'resolver' => App\Spaces\SubscriberAccess::class,
-],
-```
-
-```env
-ATP_SERVICE_AUTH_AUDIENCE=did:web:app.example.com#forum
-```
-
-That audience is the identifier you publish in your DID document and name in
-`SpacePolicy::managingApp()`. Requests are authenticated by `atp-client`'s `atp.service-auth`
-middleware, which verifies the authority's signature against its published key.
-
-Three things this endpoint does on your behalf:
-
-- **Confirms the caller governs the space it is asking about.** The middleware proves some
-  service signed for this method, but not which space it owns. Without that check any token
-  holder could ask who has access to anyone's space.
-- **Fails closed.** A throwing resolver, an unauthenticated request, or no resolver at all all
-  answer `false`. The reason goes to the log, not the response.
-- **Stays off until you turn it on.** The default resolver refuses everyone, so a half-finished
-  setup grants nothing.
-
-> [!IMPORTANT]
-> An unreachable managing app **denies**. Under this policy your endpoint's availability becomes
-> your content's availability, and the authority calls it while a user waits for a credential.
-> Keep the resolver fast, and be careful what it depends on.
-
-## Syncing a Space
-
-Polling every member with `listRepoOps()` works, but the authority can tell you when something
-changes instead. Register your service for a space, and the authority calls you each time a
-member's repo advances, and once more if the space is deleted.
-
-```php
-$reader = $client->space->read($space);
-
-$expiresAt = $reader->registerNotify();
-```
-
-The registration lapses on its own, after a day on the alpha PDS. Register again before
-`$expiresAt` to stay subscribed, and call `unregisterNotify()` to stop early.
-
-Your service is named by the same identifier the managing app uses, a DID plus the fragment of
-the DID document entry the authority delivers to. It defaults to `ATP_SERVICE_AUTH_AUDIENCE`,
-or pass one to `registerNotify()`.
-
-```env
-ATP_SERVICE_AUTH_AUDIENCE=did:web:app.example.com#atproto_space_syncer
-SPACES_SYNCER=true
-```
-
-With the syncer on, the package serves `notifyWrite` and `notifySpaceDeleted` and turns each
-call into an event:
-
-```php
-use SocialDept\AtpSpaces\Events\SpaceDeletedNotified;
-use SocialDept\AtpSpaces\Events\SpaceWriteNotified;
-
-Event::listen(function (SpaceWriteNotified $event) {
-    $last = SyncState::lastSpaceRev($event->space);
-
-    if (! $event->follows($last)) {
-        // Notifications were missed. Catch up with listRepos() from $last.
-    }
-
-    // Then read what changed with listRepoOps($event->repo, since: ...).
-});
-
-Event::listen(function (SpaceDeletedNotified $event) {
-    // Drop your copy of $event->space.
-});
-```
-
-A notification says only that a repo moved, never what changed, so a listener reads the new
-state itself. Queue your listeners: the authority does not wait long for an answer.
-
-Two things these endpoints do on your behalf:
-
-- **Confirm the caller governs the space.** As with the managing app, the middleware proves some
-  service signed for the method, and the package checks that the signer is that space's own
-  authority. Without it anyone with a token could tell you a space was deleted.
-- **Stay off until you turn them on.** The routes must be reachable from the public internet.
-
-> [!NOTE]
-> Delivery is best effort. The authority does not retry a write notification, so treat the
-> events as a prompt to sync, not as the record of what happened. `prevSpaceRev` is how you
-> notice a gap, and a deletion you miss surfaces later as `SpaceDeleted` when a credential is
-> renewed.
-
-## Credentials
-
-Getting into a space takes two hops, because the two halves answer different questions. Your PDS
-attests *that this app acts for this user*, in a 60-second single-use delegation token. The space
-authority decides *whether that user may enter*, and issues a credential bound to a key only your
-app holds.
-
-```php
-$credential = $client->space->credential($space);
-
-$credential->expiresAt();
-$credential->isExpired(leeway: 30);
-$credential->isCorrectlyBound();   // checked automatically on issue
-
-$client->space->forget($space);    // discard, forcing a fresh mint
-```
-
-Credentials are cached for their lifetime, keyed by space and user. Configure under
-`atp-spaces.credentials`, or set `SPACES_CREDENTIAL_CACHE=false` to mint one per use.
-
-A credential lasts about ten minutes. It reads the **whole space** and is presented to every repo
-host in it. As a bearer token that would be a shared secret, since a host given one could replay
-it against its peers. So each credential is bound to a fresh P-256 key only your app holds, and
-every request carries an HTTP Message Signature over the credential and the DID it is for: the
-repo owner for a repo read, the authority for its host. A host cannot replay a request at another
-member's host.
-
-An authority can revoke a credential early. A reader then throws a `CredentialException` whose
-`isRevoked()` is true and drops the stored credential, so the next `read()` mints a replacement if
-the user may still enter.
-
-Refusals say which perimeter failed:
-
-```php
-use SocialDept\AtpSpaces\Exceptions\CredentialException;
-
-try {
-    $reader = $client->space->read($space);
-} catch (CredentialException $e) {
-    $e->isUserRefusal();   // UserNotAuthorized
-    $e->isAppRefusal();    // AppNotAuthorized
-    $e->isSpaceDeleted();  // SpaceDeleted
-    $e->isRetryable();     // InvalidDelegationToken: a fresh mint may succeed
-}
-```
-
-An authority that would rather not disclose which perimeter failed returns `NotAuthorized`, and
-both predicates are false.
-
-### When the session lives in the browser
-
-An app whose users' OAuth sessions live in the browser has no session on the server to ask the PDS
-with. The browser asks its own PDS for the delegation token instead, with
-`com.atproto.space.getDelegationToken`, and sends it to your server, which spends it:
-
-```php
-use SocialDept\AtpSpaces\Facades\Spaces;
-
-$credential = Spaces::credentialFromDelegation($space, $request->input('delegationToken'));
-
-$credential->userDid;   // the user the token names
-$reader = Spaces::readerFor($credential);
-```
-
-The credential is bound to your server's key as usual, and stored under the user the token names.
-The token itself is not checked against the user's signing key here. The authority does that
-before it issues anything, so the user it names is trusted only once a credential comes back.
-A token for a different space, or one aimed at a different authority, is refused before it is
-sent, with a `CredentialException` whose `error` is `InvalidDelegationToken` or
-`BadJwtAudience`.
-
-## Verifying Repo State
-
-Space repos have no Merkle search tree. State is the *set* of records a repo contains, folded into
-a homomorphic set hash, so operations replay in any order and still produce a comparable digest.
-
-```php
-use SocialDept\AtpSpaces\Repo\RepoCommit;
-use SocialDept\AtpSpaces\Repo\RepoOp;
-
-$repo = RepoCommit::fromIndex([
-    'com.example.thread/1' => 'bafyA',
-    'com.example.thread/2' => 'bafyB',
-]);
-
-$repo->applyOp(new RepoOp('com.example.thread', '1', cid: 'bafyC', prev: 'bafyA'));
-
-$repo->matches($reader->getLatestCommit('did:plc:bob'));   // does our state match the host's?
-```
-
-A commit carries no signature. Each member publishes a `#atproto_kem` key in their DID document,
-and for every read the reader generates a fresh key, derives a secret only it and the member's
-host share, and asks for a MAC. The host returns the commit or record with a MAC keyed by that
-secret, so a leaked response proves nothing to anyone else.
-
-The reader does all of this itself. `getLatestCommit()`, the commit at the head of
-`listRepoOps()`, and `getRecord()` return only what checked out, and throw a
-`RepoVerificationException` otherwise. A record is also checked against its CID. A failed check is
-retried once after rereading the member's DID document, in case their KEM key rotated. A member
-whose host has not yet published a KEM key cannot be read with a credential until it does.
-
-To check a commit by hand:
-
-```php
-$result = RepoCommit::verify($commit, $space, $repo, $sharedSecret, $mac);
-
-$result->isVerified();      // the right repo and space, and the MAC matches
-$result->failureReason();   // null, or a short explanation
-$result->assertVerified();
-```
-
-### BLAKE3
-
-The set hash expands each element with BLAKE3 in XOF mode. PHP has no BLAKE3 and no maintained
-package provides one, so this ships a pure-PHP implementation verified against all 105 upstream
-test vectors.
-
-It costs roughly **1.25 ms per record**, which is fine incrementally and acceptable for
-background verification. If it isn't, bind your own `Contracts\Blake3Hasher`. `Crypto\Blake3` is
-also usable standalone for hashing, keyed hashing, and key derivation.
-
-## Lexicon Drift
-
-The `com.atproto.space.*` and `com.atproto.simplespace.*` lexicons are vendored verbatim under
-`lexicons/`, pinned to an upstream commit in `MANIFEST.json`. Nothing is transcribed by hand, so
-a rename upstream surfaces as a failing command rather than a 400 in production.
+## Testing
 
 ```bash
-php artisan spaces:lexicon-drift             # compare against upstream
-php artisan spaces:lexicon-drift --offline   # verify the vendored files only
-php artisan spaces:lexicon-drift --token=…   # raise the GitHub rate limit
-```
-
-The command exits non-zero on drift. Vendored files are byte-for-byte upstream's, so re-vendor
-them rather than editing them.
-
-## Gotchas
-
-**`listSpaces` is a hint, not a roster.** It reports spaces the user has *written to*, and a
-member's per-space repo survives the space being deleted, as an empty shell no method removes.
-`getDelegationToken` also succeeds for spaces that never existed, since the PDS mints tokens
-without checking. The durable signal is one hop later, at credential renewal:
-
-```php
-catch (CredentialException $e) {
-    if ($e->isSpaceDeleted()) { /* prune it */ }
-}
-```
-
-**App passwords do not work.** The space endpoints require `ACCESS_FULL`
-(`com.atproto.access`), which excludes both `AppPass` and `AppPassPrivileged`. Use OAuth.
-
-**Only loopback redirects are accepted** for `http://` OAuth clients. That means `localhost`,
-`127.0.0.1`, or `[::1]`. A LAN or tailnet address is rejected outright.
-
-**`space:` scopes work** and are granted verbatim, even though an authorization server's
-`scopes_supported` metadata may not list them.
-
-## Available Commands
-
-```bash
-php artisan spaces:lexicon-drift    # check the vendored lexicons against upstream
-```
-
-## Requirements
-
-- PHP 8.3+
-- Laravel 11+
-- [socialdept/atp-support](https://github.com/socialdept/atp-support) - Identity resolution, did:key signature verification
-- [socialdept/atp-client](https://github.com/socialdept/atp-client) - OAuth sessions and the authenticated HTTP client
-
-### Development target
-
-Bluesky runs a public alpha PDS with spaces enabled at `https://spaces-alpha.host.bsky.network`
-(handles under `.spaces-alpha.bsky.network`, invite required). The full lifecycle has been
-exercised against it with three real accounts, and the set hash computed here matched the commit
-that PDS signed.
-
-## Running Tests
-
-```bash
-composer install
 vendor/bin/phpunit --exclude-group integration
-vendor/bin/php-cs-fixer fix --dry-run --diff
 ```
 
-The `integration` group reaches the network and is excluded from CI, since a failure there means
-the world changed rather than the code:
+## Contributing
 
-```bash
-vendor/bin/phpunit --group integration
-```
-
-`SpaceLifecycleTest` goes further and exercises the whole feature against a live PDS. It needs
-three OAuth-authorized accounts and **skips** without them:
-
-```bash
-php dev/oauth.php authorize alice.spaces-alpha.bsky.network
-# approve in a browser, then copy the failed callback URL
-php dev/oauth.php exchange alice.spaces-alpha.bsky.network '<callback-url>'
-
-ATP_SPACES_TOKENS=./.oauth vendor/bin/phpunit --group integration
-```
-
-It cleans up after itself, but each run leaves one empty repo shell on the member's account.
-See the gotcha above. Point it at throwaway accounts.
-
-## Resources
-
-- [Atproto Spaces (alpha)](https://atproto.com/blog/atproto-spaces-alpha)
-- [Atproto Spaces Proposal](https://github.com/bluesky-social/proposals/tree/main/0016-permissioned-data)
-- [AT Protocol Documentation](https://atproto.com/)
-- [OAuth Scopes Proposal](https://github.com/bluesky-social/proposals/tree/main/0011-auth-scopes)
-
-## Support & Contributing
-
-Found a bug or have a feature request? [Open an issue](https://github.com/socialdept/atp-spaces/issues).
-
-Want to contribute? We'd love your help! Check out the [contribution guidelines](CONTRIBUTING.md).
-
-## Credits
-
-- [Miguel Batres](https://batres.co) - founder & lead maintainer
-- [All contributors](https://github.com/socialdept/atp-spaces/graphs/contributors)
+Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
 
 ## License
 
-ATP Spaces is open-source software licensed under the [MIT license](LICENSE).
-
----
-
-**Built for the Atmosphere** • By Social Dept.
+The MIT License (MIT). Please see [LICENSE](LICENSE) for more information.

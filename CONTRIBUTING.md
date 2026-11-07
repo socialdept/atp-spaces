@@ -19,7 +19,7 @@ When requesting or submitting new features, first consider whether it might be u
 ### Before Filing an Issue
 
 - Search existing issues to avoid duplicates
-- Check the [documentation](README.md) to ensure it's not a usage question
+- Check the [documentation](docs/introduction.md) to ensure it's not a usage question
 - Provide a clear title and description
 - Include steps to reproduce the issue
 - Specify your environment (PHP version, Laravel version, package version)
@@ -40,21 +40,21 @@ When requesting or submitting new features, first consider whether it might be u
 
 - **[PSR-12 Coding Standard](https://www.php-fig.org/psr/psr-12/)** - Run `vendor/bin/php-cs-fixer fix` to automatically fix code style issues.
 - **Add tests** - Your patch won't be accepted if it doesn't have tests. All tests must use [PHPUnit](https://phpunit.de/).
-- **Document any change in behavior** - Make sure the `README.md` and any other relevant documentation are kept up-to-date.
+- **Document any change in behavior** - Make sure the `README.md` and the pages under `docs/` are kept up-to-date.
 - **Consider our release cycle** - We follow [SemVer v2.0.0](https://semver.org/). Randomly breaking public APIs is not an option.
 - **One pull request per feature** - If you want to do more than one thing, send multiple pull requests.
 - **Send coherent history** - Make sure each individual commit in your pull request is meaningful. If you had to make multiple intermediate commits while developing, please [squash them](https://www.git-scm.com/book/en/v2/Git-Tools-Rewriting-History#Changing-Multiple-Commit-Messages) before submitting.
 
 ## How Changes Land
 
-`main` is protected. Every change arrives by pull request; direct pushes are
+`main` is protected. Every change arrives by pull request, and direct pushes are
 blocked.
 
 - **Merges are squash-only, and the PR title becomes the permanent commit
   message on `main`.** Write it as one descriptive line. Individual commit
   messages are preserved in the body.
-- **Both checks must pass** — `Tests (PHP 8.4 - Laravel 13)` and `php-cs-fixer`
-  — and your branch must be up to date with `main` before merging.
+- **Two checks must pass:** `Tests (PHP 8.4 - Laravel 13)` and `php-cs-fixer`.
+  Your branch must also be up to date with `main` before merging.
 - No approval is required, but review threads must be resolved.
 
 ## Running Tests
@@ -63,15 +63,35 @@ blocked.
 vendor/bin/phpunit --exclude-group integration
 ```
 
-The `integration` group reaches the GitHub API to check the vendored lexicons
-against upstream. It is excluded in CI and run deliberately:
+The `integration` group reaches the network. It checks the vendored lexicons
+against upstream through the GitHub API, and the package's assumptions against
+Bluesky's public alpha PDS. It is excluded in CI and run deliberately:
 
 ```bash
 vendor/bin/phpunit --group integration
 ```
 
-A failure there is not a bug in this package — it means upstream moved and the
-lexicons need re-pinning.
+A failure there is not a bug in this package. It means upstream or the alpha
+service moved, and the lexicons or the code need to follow.
+
+### The live PDS suite
+
+Bluesky runs a public alpha PDS with spaces enabled at
+`https://spaces-alpha.host.bsky.network` (handles under
+`.spaces-alpha.bsky.network`, invite required). `SpaceLifecycleTest`, in the
+`integration` group, exercises the whole feature against it. It needs three
+OAuth-authorized accounts and **skips** without them:
+
+```bash
+php dev/oauth.php authorize alice.spaces-alpha.bsky.network
+# approve in a browser, then copy the failed callback URL
+php dev/oauth.php exchange alice.spaces-alpha.bsky.network '<callback-url>'
+
+ATP_SPACES_TOKENS=./.oauth vendor/bin/phpunit --group integration
+```
+
+It cleans up after itself, but each run leaves one empty repo shell on the
+member's account, since no method removes one. Point it at throwaway accounts.
 
 ## Vendored Lexicons
 
